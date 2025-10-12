@@ -632,7 +632,9 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
         
         logger.subsection('Step 2: Executing stream reordering');
         
-        const outputFilePath = `${(0, fileUtils_1.getPluginWorkDir)(args)}/${(0, fileUtils_1.getFileName)(args.inputFileObj._id)}.${args.inputFileObj.container}`;
+        // Normalize path separators for cross-platform compatibility
+        const normalizedInputPath = args.inputFileObj._id.replace(/\\/g, '/');
+        const outputFilePath = `${(0, fileUtils_1.getPluginWorkDir)(args)}/${(0, fileUtils_1.getFileName)(normalizedInputPath)}.${args.inputFileObj.container}`;
         
         const ffmpegArgs = [
             '-i', args.inputFileObj._id,
