@@ -1032,7 +1032,7 @@ const tryTmdbLookup = (id, args, logger, searchType = 'imdb_id') => __awaiter(vo
                 timeout: 30000,
                 headers: {
                     'Accept': 'application/json',
-                    'User-Agent': 'Tdarr-DeNiX-Plugin/1.0'
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 }
             }
         );
@@ -1149,7 +1149,7 @@ const lookupInArrInstance = (service, instance, fileName, args, logger) => __awa
             timeout: 30000,
             headers: {
                 'Accept': 'application/json',
-                'User-Agent': 'Tdarr-DeNiX-Plugin/1.0'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
         });
 
