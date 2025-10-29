@@ -1788,38 +1788,35 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
 			if (create20IfMissing && !langData.hasStereo && langData.highestChannelStream) {
 				const highestStream = langData.highestChannelStream;
 				
-				// ✅ Only create if source is NOT already Opus
+				// ✅ Only create if source is NOT already Opus and is multi-channel
 				if (highestStream.channels > 2 && highestStream.codec !== 'opus') {
-                
-                // Only create if the highest channel stream is multi-channel
-                if (highestStream.channels > 2) {
-                    // Calculate source bitrate
-                    let sourceBitrate = 0;
-                    if (highestStream.stream.bit_rate) {
-                        sourceBitrate = parseInt(highestStream.stream.bit_rate, 10);
-                    } else if (highestStream.stream.tags?.BPS) {
-                        sourceBitrate = parseInt(highestStream.stream.tags.BPS, 10);
-                    }
-                    const sourceBitrateKbps = sourceBitrate > 0 ? Math.round(sourceBitrate / 1000) : 0;
-                    
-                    const bitrateStereo = calculateTargetBitrate(2, sourceBitrateKbps, args.inputs);
-                    
-                    tracksToCreate.push({
-                        streamIndex: highestStream.streamIndex,
-                        action: 'convert',
-                        sourceChannels: highestStream.channels,
-                        targetChannels: 2,
-                        bitrate: bitrateStereo,
-                        language: language,
-                        title: highestStream.stream.tags?.title ? `${highestStream.stream.tags.title} (Stereo)` : 'Stereo',
-                        description: `Create stereo Opus from ${highestStream.channels}ch @ ${bitrateStereo}`,
-                        useDownmixFilter: true,
-                        downmixType: 'stereo'
-                    });
-                    
-                    logger.extended(`Creating stereo track for ${language} from ${highestStream.channels}ch source`);
-                }
-            }
+					// Calculate source bitrate
+					let sourceBitrate = 0;
+					if (highestStream.stream.bit_rate) {
+						sourceBitrate = parseInt(highestStream.stream.bit_rate, 10);
+					} else if (highestStream.stream.tags?.BPS) {
+						sourceBitrate = parseInt(highestStream.stream.tags.BPS, 10);
+					}
+					const sourceBitrateKbps = sourceBitrate > 0 ? Math.round(sourceBitrate / 1000) : 0;
+					
+					const bitrateStereo = calculateTargetBitrate(2, sourceBitrateKbps, args.inputs);
+					
+					tracksToCreate.push({
+						streamIndex: highestStream.streamIndex,
+						action: 'convert',
+						sourceChannels: highestStream.channels,
+						targetChannels: 2,
+						bitrate: bitrateStereo,
+						language: language,
+						title: highestStream.stream.tags?.title ? `${highestStream.stream.tags.title} (Stereo)` : 'Stereo',
+						description: `Create stereo Opus from ${highestStream.channels}ch @ ${bitrateStereo}`,
+						useDownmixFilter: true,
+						downmixType: 'stereo'
+					});
+					
+					logger.extended(`Creating stereo track for ${language} from ${highestStream.channels}ch source`);
+				}
+			}
             
             // Now build FFmpeg arguments for all tracks to create
             for (const track of tracksToCreate) {
