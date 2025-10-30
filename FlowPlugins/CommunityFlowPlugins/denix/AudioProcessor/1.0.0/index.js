@@ -865,6 +865,11 @@ const findDuplicateAudioTracks = (streams, audioStreamsToRemove = []) => {
             continue;
         }
         
+        // ✅ Skip Opus tracks - don't remove them as duplicates!
+        if (stream.codec_name === 'opus') {
+            continue;
+        }
+        
         const language = stream.tags?.language?.toLowerCase() || 'und';
         const channels = stream.channels || 0;
         const groupKey = `${language}_${channels}`;
@@ -900,21 +905,25 @@ const findDuplicateAudioTracks = (streams, audioStreamsToRemove = []) => {
     return duplicatesToRemove;
 };
 
-// Helper function to find lower channel tracks when higher channel exists for same language
 const findLowerChannelDuplicates = (streams, audioStreamsToRemove = []) => {
     const lowerChannelToRemove = [];
     const languageChannelMap = new Map();
     
-    // Group streams by language and track their channel counts
     for (let i = 0; i < streams.length; i++) {
         const stream = streams[i];
         
+		// Group streams by language and track their channel counts
         if (stream.codec_type.toLowerCase() !== 'audio' || audioStreamsToRemove.includes(i)) {
             continue;
         }
         
         const isCommentary = isCommentaryTrack(stream);
         if (isCommentary) {
+            continue;
+        }
+        
+        // ✅ Skip Opus tracks - they're already optimal!
+        if (stream.codec_name === 'opus') {
             continue;
         }
         
@@ -1026,18 +1035,35 @@ const tryTmdbLookup = (id, args, logger, searchType = 'imdb_id') => __awaiter(vo
         
         logger.debug(`TMDB API lookup: ${searchType} = ${id}`);
         
-        const response = yield axios.get(
-            `https://api.themoviedb.org/3/find/${id}?api_key=${args.inputs.tmdb_api_key}&language=en-US&external_source=${searchType}`,
-            {
-                timeout: 30000,
-                headers: {
-                    'Accept': 'application/json',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
+        const apiKey = args.inputs.tmdb_api_key;
+        
+        // Detect if it's a v4 Bearer token (longer) or v3 API key (shorter, 32 chars)
+        const isV4Token = apiKey.length > 40;
+        
+        const config = {
+            timeout: 30000,
+            headers: {
+                'Accept': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36'
             }
-        );
+        };
+        
+        let url;
+        if (isV4Token) {
+            // v4 Bearer token - use Authorization header
+            url = `https://api.themoviedb.org/3/find/${id}?language=en-US&external_source=${searchType}`;
+            config.headers['Authorization'] = `Bearer ${apiKey}`;
+            logger.debug('Using TMDB API v4 (Bearer token)');
+        } else {
+            // v3 API key - use URL parameter
+            url = `https://api.themoviedb.org/3/find/${id}?api_key=${apiKey}&language=en-US&external_source=${searchType}`;
+            logger.debug('Using TMDB API v3 (API key)');
+        }
+        
+        const response = yield axios.get(url, config);
         
         const data = response.data;
+        logger.debug(`TMDB Response: ${JSON.stringify(data)}`);
         
         if (data.movie_results && data.movie_results.length > 0) {
             logger.debug(`TMDB movie result found: ${data.movie_results[0].title || 'Unknown'}`);
@@ -1758,39 +1784,39 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
                 }
             }
             
-            // After processing existing streams, check if we need to create stereo
-            if (create20IfMissing && !langData.hasStereo && langData.highestChannelStream) {
-                const highestStream = langData.highestChannelStream;
-                
-                // Only create if the highest channel stream is multi-channel
-                if (highestStream.channels > 2) {
-                    // Calculate source bitrate
-                    let sourceBitrate = 0;
-                    if (highestStream.stream.bit_rate) {
-                        sourceBitrate = parseInt(highestStream.stream.bit_rate, 10);
-                    } else if (highestStream.stream.tags?.BPS) {
-                        sourceBitrate = parseInt(highestStream.stream.tags.BPS, 10);
-                    }
-                    const sourceBitrateKbps = sourceBitrate > 0 ? Math.round(sourceBitrate / 1000) : 0;
-                    
-                    const bitrateStereo = calculateTargetBitrate(2, sourceBitrateKbps, args.inputs);
-                    
-                    tracksToCreate.push({
-                        streamIndex: highestStream.streamIndex,
-                        action: 'convert',
-                        sourceChannels: highestStream.channels,
-                        targetChannels: 2,
-                        bitrate: bitrateStereo,
-                        language: language,
-                        title: highestStream.stream.tags?.title ? `${highestStream.stream.tags.title} (Stereo)` : 'Stereo',
-                        description: `Create stereo Opus from ${highestStream.channels}ch @ ${bitrateStereo}`,
-                        useDownmixFilter: true,
-                        downmixType: 'stereo'
-                    });
-                    
-                    logger.extended(`Creating stereo track for ${language} from ${highestStream.channels}ch source`);
-                }
-            }
+			// After processing existing streams, check if we need to create stereo
+			if (create20IfMissing && !langData.hasStereo && langData.highestChannelStream) {
+				const highestStream = langData.highestChannelStream;
+				
+				// ✅ Only create if source is NOT already Opus and is multi-channel
+				if (highestStream.channels > 2 && highestStream.codec !== 'opus') {
+					// Calculate source bitrate
+					let sourceBitrate = 0;
+					if (highestStream.stream.bit_rate) {
+						sourceBitrate = parseInt(highestStream.stream.bit_rate, 10);
+					} else if (highestStream.stream.tags?.BPS) {
+						sourceBitrate = parseInt(highestStream.stream.tags.BPS, 10);
+					}
+					const sourceBitrateKbps = sourceBitrate > 0 ? Math.round(sourceBitrate / 1000) : 0;
+					
+					const bitrateStereo = calculateTargetBitrate(2, sourceBitrateKbps, args.inputs);
+					
+					tracksToCreate.push({
+						streamIndex: highestStream.streamIndex,
+						action: 'convert',
+						sourceChannels: highestStream.channels,
+						targetChannels: 2,
+						bitrate: bitrateStereo,
+						language: language,
+						title: highestStream.stream.tags?.title ? `${highestStream.stream.tags.title} (Stereo)` : 'Stereo',
+						description: `Create stereo Opus from ${highestStream.channels}ch @ ${bitrateStereo}`,
+						useDownmixFilter: true,
+						downmixType: 'stereo'
+					});
+					
+					logger.extended(`Creating stereo track for ${language} from ${highestStream.channels}ch source`);
+				}
+			}
             
             // Now build FFmpeg arguments for all tracks to create
             for (const track of tracksToCreate) {
