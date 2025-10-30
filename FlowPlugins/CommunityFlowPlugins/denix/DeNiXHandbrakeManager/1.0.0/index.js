@@ -1733,6 +1733,12 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
             '--preset', preset.PresetList[0].PresetName,
             '--verbose=2'
         ];
+		
+		// Add hardware decoding for NVIDIA encoders
+		if (args.inputs.videoEncoder && args.inputs.videoEncoder.startsWith('nvenc')) {
+			cliArguments.push('--enable-hw-decoding', 'nvdec');
+			logger.info('🎮 NVIDIA hardware decoding enabled (nvdec)');
+		}
         
         logger.info(`Using HandBrake preset: ${preset.PresetList[0].PresetName}`);
         logger.info(`Output container: ${container}`);
