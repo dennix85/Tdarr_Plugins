@@ -809,14 +809,21 @@ const analyzeVideoForHDR = (filePath, inputs, logger) => {
         
         // Get MediaInfo data using enhanced fallback chain
         if (isDocker) {
-            // Docker: Try Tdarr MediaInfo.js first
+            // Docker: Try CLI first (same as bare metal), then fallback to MediaInfo.js
             try {
-                logger.extended('📊 Analyzing with Tdarr MediaInfo.js module...');
-                mediaInfoData = runTdarrMediaInfo(filePath, logger);
-                analysisMethod = 'Tdarr MediaInfo.js';
-            } catch (mediaInfoError) {
-                logger.warn(`⚠️ Tdarr MediaInfo.js failed: ${mediaInfoError.message}`);
-                throw new Error('Docker MediaInfo.js failed and no fallback available');
+                logger.extended('📊 Analyzing with MediaInfo CLI...');
+                mediaInfoData = runMediaInfoCLI(filePath, mediainfoPath, logger);
+                analysisMethod = 'MediaInfo CLI';
+            } catch (cliError) {
+                logger.warn(`⚠️ MediaInfo CLI failed: ${cliError.message}`);
+                try {
+                    logger.extended('🔄 Trying Tdarr MediaInfo.js fallback...');
+                    mediaInfoData = runTdarrMediaInfo(filePath, logger);
+                    analysisMethod = 'Tdarr MediaInfo.js';
+                } catch (mediaInfoError) {
+                    logger.warn(`⚠️ Tdarr MediaInfo.js failed: ${mediaInfoError.message}`);
+                    throw new Error('Both MediaInfo CLI and MediaInfo.js failed in Docker');
+                }
             }
         } else {
             // Bare metal: Try CLI first, then fallback
