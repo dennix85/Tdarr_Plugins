@@ -64,7 +64,7 @@ const details = () => ({
             label: '🏷️ Search Terms',
             name: 'terms',
             type: 'string',
-            defaultValue: '[TDARR],_720p,_1080p',
+            defaultValue: '[TDARR],TDARR,-TDARR',
             inputUI: { type: 'text' },
             tooltip: 'Comma-separated list of terms to search for (e.g., [TDARR],_720p,_1080p,processed). Case-sensitive exact matching.',
         },
