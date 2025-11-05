@@ -16,14 +16,13 @@ const fileUtils_1 = require("../../../../FlowHelpers/1.0.0/fileUtils");
 
 // Plugin details
 const details = () => ({
-    name: '🔍 DeNiX Enhanced File Name Checker: Advanced Pattern Matching & Skip Processing',
-    description: 'Enhanced file name checker with intelligent pattern matching, regex support, comprehensive logging, and skip term processing. Features confidence scoring, multiple pattern types, and detailed analysis for flow control decisions.',
+    name: '🔍 DeNiX Enhanced File Name Checker: Advanced Pattern Matching',
+    description: 'Enhanced file name checker with intelligent pattern matching, regex support, and comprehensive logging. Features confidence scoring and detailed analysis. Match found = Output 2 (Skip), No match = Output 1 (Continue).',
     style: {
         borderColor: '#FF9800',
         backgroundColor: 'rgba(255, 152, 0, 0.1)',
         borderWidth: '2px',
         borderStyle: 'solid',
-        // Enhanced bright orange glow with 10 layers - expanded reach with graduated opacity
         boxShadow: `
             0 0 10px rgba(255, 152, 0, 0.5),
             0 0 25px rgba(255, 152, 0, 0.46),
@@ -40,7 +39,7 @@ const details = () => ({
         `,
         background: 'linear-gradient(45deg, rgba(255, 152, 0, 0.1), rgba(255, 111, 0, 0.1))',
     },
-    tags: 'conditional,filename,pattern,skip,enhanced',
+    tags: 'conditional,filename,pattern,enhanced',
     isStartPlugin: false,
     pType: '',
     requiresVersion: '2.11.01',
@@ -65,7 +64,7 @@ const details = () => ({
             label: '🏷️ Search Terms',
             name: 'terms',
             type: 'string',
-            defaultValue: '[TDARR],_720p,_1080p',
+            defaultValue: '[TDARR],TDARR,-TDARR',
             inputUI: { type: 'text' },
             tooltip: 'Comma-separated list of terms to search for (e.g., [TDARR],_720p,_1080p,processed). Case-sensitive exact matching.',
         },
@@ -78,7 +77,7 @@ const details = () => ({
             tooltip: 'Enable case-sensitive matching for search terms. Disable for case-insensitive matching.',
         },
         {
-            label: '📝 Regex Pattern',
+            label: '🔍 Regex Pattern',
             name: 'pattern',
             type: 'string',
             defaultValue: '',
@@ -92,22 +91,6 @@ const details = () => ({
             defaultValue: false,
             inputUI: { type: 'switch' },
             tooltip: 'Include full directory path in search instead of just filename. Useful for path-based filtering.',
-        },
-        {
-            label: '⏭️ Skip Mode (Set to Original)',
-            name: 'skipMode',
-            type: 'boolean',
-            defaultValue: false,
-            inputUI: { type: 'switch' },
-            tooltip: 'Enable skip mode: when terms match, set file to original and exit flow cleanly (useful for skip processing)',
-        },
-        {
-            label: '🔄 Invert Match Logic',
-            name: 'invertMatch',
-            type: 'boolean',
-            defaultValue: false,
-            inputUI: { type: 'switch' },
-            tooltip: 'Invert matching logic: Output 1 when terms do NOT match, Output 2 when terms DO match',
         },
         {
             label: '📊 Logging Level',
@@ -132,11 +115,11 @@ const details = () => ({
     outputs: [
         {
             number: 1,
-            tooltip: '✅ Continue processing - Terms found (or not found if inverted)',
+            tooltip: '✅ No match found - Continue processing',
         },
         {
             number: 2,
-            tooltip: '⏭️ Skip processing - Terms not found (or found if inverted), or skip mode activated',
+            tooltip: '⏭️ Match found - Skip processing',
         },
     ],
 });
@@ -199,7 +182,7 @@ class Logger {
 }
 
 // ===============================================
-// ENHANCED HELPER FUNCTIONS
+// HELPER FUNCTIONS
 // ===============================================
 
 // Performance timer helper
@@ -284,7 +267,7 @@ const performPatternMatching = (searchString, terms, pattern, caseSensitive, log
             
             logger.extended(`Testing regex pattern: ${pattern} (flags: ${flags || 'none'})`);
             
-            if (regex.test(searchString)) { // Always use original case for regex
+            if (regex.test(searchString)) {
                 result.matchedPatterns.push(pattern.trim());
                 result.analysisDetails.patternMatches.push({
                     pattern: pattern.trim(),
@@ -396,20 +379,18 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
             totalTime: 0
         };
 
-        // Extract inputs using destructuring
+        // Extract inputs
         const {
             fileToCheck,
             terms,
             caseSensitive,
             pattern,
             includeFileDirectory,
-            skipMode,
-            invertMatch,
             logging_level,
             showPerformanceMetrics
         } = args.inputs;
 
-        logger.section('DeNiX Enhanced File Name Checker: Advanced Pattern Matching & Skip Processing');
+        logger.section('DeNiX Enhanced File Name Checker: Advanced Pattern Matching');
 
         // ===============================================
         // STEP 1: INITIALIZATION AND INPUT VALIDATION
@@ -429,10 +410,8 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
 
         // Configuration logging
         logger.extended(`🏷️ Search terms: ${terms || 'None'}`);
-        logger.extended(`📝 Regex pattern: ${pattern || 'None'}`);
+        logger.extended(`🔍 Regex pattern: ${pattern || 'None'}`);
         logger.extended(`🔤 Case sensitive: ${caseSensitive ? 'Yes' : 'No'}`);
-        logger.extended(`⏭️ Skip mode: ${skipMode ? 'Enabled' : 'Disabled'}`);
-        logger.extended(`🔄 Invert logic: ${invertMatch ? 'Yes' : 'No'}`);
         logger.extended(`📊 Logging level: ${logging_level}`);
 
         processingMetrics.initializationTime = Date.now() - initStartTime;
@@ -483,7 +462,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
             }
             
             if (matchResult.matchedPatterns.length > 0) {
-                logger.info(`📝 Matched patterns: ${matchResult.matchedPatterns.join(', ')}`);
+                logger.info(`🔍 Matched patterns: ${matchResult.matchedPatterns.join(', ')}`);
             }
         } else {
             logger.info('No pattern matches found');
@@ -518,34 +497,29 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
         
         logger.subsection('Step 4: Decision logic and output routing');
 
-        // Apply invert logic if enabled
-        let finalMatch = matchResult.isMatch;
-        if (invertMatch) {
-            finalMatch = !matchResult.isMatch;
-            logger.info(`🔄 Invert logic applied: ${matchResult.isMatch ? 'match' : 'no match'} → ${finalMatch ? 'proceed' : 'skip'}`);
-        }
-
-        let outputNumber = finalMatch ? 1 : 2;
+        let outputNumber;
         let outputFileObj = args.inputFileObj;
 
-        // Handle skip mode
-        if (skipMode && matchResult.isMatch && !invertMatch) {
-            logger.warn('⏭️ Skip mode activated - setting file to original');
-            
-            if (!args.originalLibraryFile || !args.originalLibraryFile._id) {
-                logger.error('Missing original library file for skip mode');
-                throw new Error('Skip mode requires valid original library file');
-            }
-
-            outputFileObj = { _id: args.originalLibraryFile._id };
+        // Simple logic: Match found = Output 2 (Skip), No match = Output 1 (Continue)
+        if (matchResult.isMatch) {
             outputNumber = 2;
-            logger.success(`File set to original: ${args.originalLibraryFile._id}`);
+            logger.info('🎯 Match found - routing to Output 2 (Skip)');
+            
+            if (matchResult.matchedTerms.length > 0) {
+                logger.info(`🏷️ Matched terms: ${matchResult.matchedTerms.join(', ')}`);
+            }
+            
+            if (matchResult.matchedPatterns.length > 0) {
+                logger.info(`🔍 Matched patterns: ${matchResult.matchedPatterns.join(', ')}`);
+            }
+        } else {
+            outputNumber = 1;
+            logger.info('✅ No match found - routing to Output 1 (Continue)');
         }
 
         // Log final decision
-        const action = outputNumber === 1 ? 'Continue processing' : 'Skip/Exit processing';
-        const reason = skipMode && matchResult.isMatch ? 'Skip mode activated' : 
-                      finalMatch ? 'Pattern match found' : 'No pattern match';
+        const action = outputNumber === 1 ? 'Continue processing' : 'Skip processing';
+        const reason = matchResult.isMatch ? 'Pattern/term match found' : 'No pattern/term match';
         
         logger.success(`Decision: ${action} (${reason})`);
         logger.info(`Routing to Output ${outputNumber}`);
@@ -566,8 +540,6 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
             filename_check_confidence: matchResult.confidence,
             filename_check_matched_terms: matchResult.matchedTerms.join(','),
             filename_check_matched_patterns: matchResult.matchedPatterns.join(','),
-            filename_check_inverted: invertMatch,
-            filename_check_skip_mode: skipMode,
             filename_check_processing_time: processingMetrics.totalTime,
             filename_check_target_path: filePathToCheck
         };
@@ -603,8 +575,6 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
                 { name: 'Regex patterns', enabled: !!(pattern && pattern.trim()) },
                 { name: 'Case sensitivity', enabled: caseSensitive },
                 { name: 'Directory inclusion', enabled: includeFileDirectory },
-                { name: 'Skip mode', enabled: skipMode },
-                { name: 'Invert logic', enabled: invertMatch },
                 { name: 'Performance metrics', enabled: showPerformanceMetrics }
             ];
             
