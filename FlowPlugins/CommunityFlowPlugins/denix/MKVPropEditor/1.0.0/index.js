@@ -458,10 +458,10 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
             logger.info('Operations completed but some warnings were encountered');
         } else if (exitCode === 2) {
             logger.error('MKVPropEdit failed with serious errors (exit code 2)');
-            outputNumber = 3;
+            outputNumber = 2;
         } else {
             logger.error(`MKVPropEdit failed with unexpected exit code: ${exitCode}`);
-            outputNumber = 3;
+            outputNumber = 2;
         }
 
         // Performance metrics
@@ -532,10 +532,11 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
         args.jobLog(logger.getOutput());
         return {
             outputFileObj: args.inputFileObj,
-            outputNumber: 3,
+            outputNumber: 2,
             variables: args.variables,
         };
     }
 });
+
 
 exports.plugin = plugin;
