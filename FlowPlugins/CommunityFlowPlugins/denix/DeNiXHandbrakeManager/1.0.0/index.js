@@ -1734,10 +1734,13 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
             '--verbose=2'
         ];
 		
-		// Add hardware decoding for NVIDIA encoders
+		// Add hardware decoding based on selected encoder
 		if (args.inputs.videoEncoder && args.inputs.videoEncoder.startsWith('nvenc')) {
 			cliArguments.push('--enable-hw-decoding', 'nvdec');
 			logger.info('🎮 NVIDIA hardware decoding enabled (nvdec)');
+		} else if (args.inputs.videoEncoder && args.inputs.videoEncoder.startsWith('qsv')) {
+			cliArguments.push('--enable-hw-decoding', 'qsv');
+			logger.info('🔵 Intel QSV hardware decoding enabled (qsv)');
 		}
         
         logger.info(`Using HandBrake preset: ${preset.PresetList[0].PresetName}`);
