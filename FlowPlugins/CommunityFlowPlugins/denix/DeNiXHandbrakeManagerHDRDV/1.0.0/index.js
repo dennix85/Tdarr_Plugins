@@ -1308,7 +1308,14 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
         logger.success(`🖥️ Platform detected: ${platformInfo.platform} (${platformInfo.isWindows ? 'Windows' : platformInfo.isMacOS ? 'macOS' : 'Linux'})`);
         
         // Get and validate HandBrake path
-        const handbrakePath = getExecutablePath(args.inputs, 'handbrake', logger);
+        let handbrakePath = getExecutablePath(args.inputs, 'handbrake', logger);
+        
+        // DeNiX container override - forces HandBrakeDVCLI regardless of user input
+        if (args.variables && args.variables.is_denix_container) {
+            handbrakePath = 'HandBrakeDVCLI';
+            logger.info('🎯 DeNiX container detected - HandBrake path overridden to HandBrakeDVCLI');
+        }
+        
         logger.extended(`🎬 HandBrake CLI path: ${handbrakePath}`);
         
         // Get HandBrake version for diagnostics
