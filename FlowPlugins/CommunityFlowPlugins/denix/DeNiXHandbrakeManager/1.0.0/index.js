@@ -21,7 +21,7 @@ const { CLI } = require("../../../../FlowHelpers/1.0.0/cliUtils");
 
 // Plugin details with enhanced DeNiX styling
 const details = () => ({
-    name: '🎬 DeNiX Enhanced HandBrake: Smart Encoder with Resolution & Bitrate Control v4.5',
+    name: '🎬 DeNiX Enhanced HandBrake: Smart Encoder with Resolution & Bitrate Control v4.0',
     description: 'Advanced HandBrake encoding system with intelligent resolution-based quality, smart bitrate filtering, comprehensive logging, and enhanced performance monitoring. Features quality-based defaults and modern codec support with detailed progress tracking.',
     style: {
         borderColor: '#FF6B35',
@@ -1438,7 +1438,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
             totalTime: 0
         };
 
-        logger.banner('🎬 ENHANCED HANDBRAKE v4.5 STARTING');
+        logger.banner('🎬 ENHANCED HANDBRAKE v4.0 STARTING');
         logger.section('DeNiX Enhanced HandBrake: Smart Encoder with Resolution & Bitrate Control');
 
         // ===============================================
@@ -1508,7 +1508,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
                 handbrake_processing_time: Date.now() - startTime,
                 handbrake_platform: platformInfo.platform,
                 handbrake_timestamp: new Date().toISOString(),
-                handbrake_plugin_version: '4.5'
+                handbrake_plugin_version: '4.0'
             };
             
             return {
@@ -1575,7 +1575,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
                     handbrake_processing_time: Date.now() - startTime,
                     handbrake_platform: platformInfo.platform,
                     handbrake_timestamp: new Date().toISOString(),
-                    handbrake_plugin_version: '4.5'
+                    handbrake_plugin_version: '4.0'
                 };
                 
                 return {
@@ -1607,7 +1607,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
                     handbrake_platform: platformInfo.platform,
                     handbrake_handbrake_path: handbrakePath,
                     handbrake_handbrake_version: handbrakeVersion.version,
-                    handbrake_plugin_version: '4.5'
+                    handbrake_plugin_version: '4.0'
                 };
 
                 args.logOutcome('tSuc');
@@ -1642,7 +1642,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
                     handbrake_processing_time: Date.now() - startTime,
                     handbrake_platform: platformInfo.platform,
                     handbrake_timestamp: new Date().toISOString(),
-                    handbrake_plugin_version: '4.5'
+                    handbrake_plugin_version: '4.0'
                 };
                 
                 return {
@@ -1715,7 +1715,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
                 handbrake_processing_time: Date.now() - startTime,
                 handbrake_platform: platformInfo.platform,
                 handbrake_timestamp: new Date().toISOString(),
-                handbrake_plugin_version: '4.5'
+                handbrake_plugin_version: '4.0'
             };
             
             return {
@@ -1734,13 +1734,10 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
             '--verbose=2'
         ];
 		
-		// Add hardware decoding based on selected encoder
+		// Add hardware decoding for NVIDIA encoders
 		if (args.inputs.videoEncoder && args.inputs.videoEncoder.startsWith('nvenc')) {
 			cliArguments.push('--enable-hw-decoding', 'nvdec');
 			logger.info('🎮 NVIDIA hardware decoding enabled (nvdec)');
-		} else if (args.inputs.videoEncoder && args.inputs.videoEncoder.startsWith('qsv')) {
-			cliArguments.push('--enable-hw-decoding', 'qsv');
-			logger.info('🔵 Intel QSV hardware decoding enabled (qsv)');
 		}
         
         logger.info(`Using HandBrake preset: ${preset.PresetList[0].PresetName}`);
@@ -1909,7 +1906,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
                 handbrake_last_progress: lastProgress,
                 handbrake_timeout_minutes: progressTimeoutMinutes,
                 handbrake_timestamp: new Date().toISOString(),
-                handbrake_plugin_version: '4.5'
+                handbrake_plugin_version: '4.0'
             };
             
             return {
@@ -1941,7 +1938,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
                 handbrake_processing_time: Date.now() - startTime,
                 handbrake_platform: platformInfo.platform,
                 handbrake_timestamp: new Date().toISOString(),
-                handbrake_plugin_version: '4.5'
+                handbrake_plugin_version: '4.0'
             };
             
             return {
@@ -1971,7 +1968,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
                 handbrake_processing_time: Date.now() - startTime,
                 handbrake_platform: platformInfo.platform,
                 handbrake_timestamp: new Date().toISOString(),
-                handbrake_plugin_version: '4.5'
+                handbrake_plugin_version: '4.0'
             };
             
             return {
@@ -1999,7 +1996,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
                 handbrake_processing_time: Date.now() - startTime,
                 handbrake_platform: platformInfo.platform,
                 handbrake_timestamp: new Date().toISOString(),
-                handbrake_plugin_version: '4.5'
+                handbrake_plugin_version: '4.0'
             };
             
             return {
@@ -2115,7 +2112,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
             handbrake_handbrake_build: handbrakeVersion.buildDate,
             handbrake_handbrake_arch: handbrakeVersion.architecture,
             handbrake_timestamp: new Date().toISOString(),
-            handbrake_plugin_version: '4.5'
+            handbrake_plugin_version: '4.0'
         };
 
         // Statistical analysis for extended logging
@@ -2229,7 +2226,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
             handbrake_error_stack: error.stack,
             handbrake_processing_time: startTime ? Date.now() - startTime : 0,
             handbrake_timestamp: new Date().toISOString(),
-            handbrake_plugin_version: '4.5'
+            handbrake_plugin_version: '4.0'
         };
         
         return {
@@ -2241,5 +2238,3 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
 });
 
 exports.plugin = plugin;
-
-
