@@ -21,7 +21,7 @@ const { CLI } = require("../../../../FlowHelpers/1.0.0/cliUtils");
 
 // Plugin details with enhanced DeNiX styling
 const details = () => ({
-    name: '🌟 DeNiX Enhanced Dolby Vision & HDR10+: Specialized HandBrake Encoder v4.0',
+    name: '🌟 DeNiX Enhanced Dolby Vision & HDR10+: Specialized HandBrake Encoder v4.5',
     description: 'Advanced Dolby Vision and HDR10+ encoding system with comprehensive MediaInfo detection, intelligent profile analysis, enhanced logging, and performance monitoring. Features environment-aware processing and quality-based defaults for premium HDR content.',
     style: {
         borderColor: '#9400D3',
@@ -1289,9 +1289,9 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
             totalTime: 0
         };
 
-        logger.banner('🌟 ENHANCED DOLBY VISION & HDR10+ ENCODER v4.0 STARTING');
+        logger.banner('🌟 ENHANCED DOLBY VISION & HDR10+ ENCODER v4.5 STARTING');
         logger.section('DeNiX Enhanced Dolby Vision & HDR10+: Specialized HandBrake Encoder');
-        logger.dv('Welcome to DeNiX Enhanced DV/HDR10+ Plugin v4.0!');
+        logger.dv('Welcome to DeNiX Enhanced DV/HDR10+ Plugin v4.5!');
 
         // ===============================================
         // STEP 1: INITIALIZATION AND ENVIRONMENT DETECTION
@@ -1918,7 +1918,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
             dvHdrHandbrakeArch: handbrakeVersion.architecture,
             dvHdrMediainfoPath: getExecutablePath(args.inputs, 'mediainfo', logger),
             dvHdrTimestamp: new Date().toISOString(),
-            dvHdrPluginVersion: '4.0'
+            dvHdrPluginVersion: '4.5'
         };
 
         // Statistical analysis for extended logging
@@ -2024,7 +2024,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
         }
         
         logger.success('🎉 DeNiX Enhanced Dolby Vision/HDR10+ encoding completed successfully!');
-        logger.success('✨ Thank you for using DeNiX Enhanced DV/HDR HandBrake Encoder v4.0!');
+        logger.success('✨ Thank you for using DeNiX Enhanced DV/HDR HandBrake Encoder v4.5!');
         logger.info('🎯 File is ready for premium HDR playback');
         logger.banner('🚀 DV/HDR ENCODING PROCESS COMPLETED SUCCESSFULLY');
 
@@ -2053,3 +2053,4 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
 });
 
 exports.plugin = plugin;
+
