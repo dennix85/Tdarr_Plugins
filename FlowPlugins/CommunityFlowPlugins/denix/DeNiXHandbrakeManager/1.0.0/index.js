@@ -1438,7 +1438,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
             totalTime: 0
         };
 
-        logger.banner('🎬 ENHANCED HANDBRAKE v4.0 STARTING');
+        logger.banner('🎬 ENHANCED HANDBRAKE v4.5 STARTING');
         logger.section('DeNiX Enhanced HandBrake: Smart Encoder with Resolution & Bitrate Control');
 
         // ===============================================
@@ -1508,7 +1508,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
                 handbrake_processing_time: Date.now() - startTime,
                 handbrake_platform: platformInfo.platform,
                 handbrake_timestamp: new Date().toISOString(),
-                handbrake_plugin_version: '4.0'
+                handbrake_plugin_version: '4.5'
             };
             
             return {
@@ -1575,7 +1575,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
                     handbrake_processing_time: Date.now() - startTime,
                     handbrake_platform: platformInfo.platform,
                     handbrake_timestamp: new Date().toISOString(),
-                    handbrake_plugin_version: '4.0'
+                    handbrake_plugin_version: '4.5'
                 };
                 
                 return {
@@ -1607,7 +1607,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
                     handbrake_platform: platformInfo.platform,
                     handbrake_handbrake_path: handbrakePath,
                     handbrake_handbrake_version: handbrakeVersion.version,
-                    handbrake_plugin_version: '4.0'
+                    handbrake_plugin_version: '4.5'
                 };
 
                 args.logOutcome('tSuc');
@@ -1642,7 +1642,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
                     handbrake_processing_time: Date.now() - startTime,
                     handbrake_platform: platformInfo.platform,
                     handbrake_timestamp: new Date().toISOString(),
-                    handbrake_plugin_version: '4.0'
+                    handbrake_plugin_version: '4.5'
                 };
                 
                 return {
@@ -1715,7 +1715,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
                 handbrake_processing_time: Date.now() - startTime,
                 handbrake_platform: platformInfo.platform,
                 handbrake_timestamp: new Date().toISOString(),
-                handbrake_plugin_version: '4.0'
+                handbrake_plugin_version: '4.5'
             };
             
             return {
@@ -1909,7 +1909,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
                 handbrake_last_progress: lastProgress,
                 handbrake_timeout_minutes: progressTimeoutMinutes,
                 handbrake_timestamp: new Date().toISOString(),
-                handbrake_plugin_version: '4.0'
+                handbrake_plugin_version: '4.5'
             };
             
             return {
@@ -1941,7 +1941,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
                 handbrake_processing_time: Date.now() - startTime,
                 handbrake_platform: platformInfo.platform,
                 handbrake_timestamp: new Date().toISOString(),
-                handbrake_plugin_version: '4.0'
+                handbrake_plugin_version: '4.5'
             };
             
             return {
@@ -1971,7 +1971,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
                 handbrake_processing_time: Date.now() - startTime,
                 handbrake_platform: platformInfo.platform,
                 handbrake_timestamp: new Date().toISOString(),
-                handbrake_plugin_version: '4.0'
+                handbrake_plugin_version: '4.5'
             };
             
             return {
@@ -1999,7 +1999,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
                 handbrake_processing_time: Date.now() - startTime,
                 handbrake_platform: platformInfo.platform,
                 handbrake_timestamp: new Date().toISOString(),
-                handbrake_plugin_version: '4.0'
+                handbrake_plugin_version: '4.5'
             };
             
             return {
@@ -2115,7 +2115,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
             handbrake_handbrake_build: handbrakeVersion.buildDate,
             handbrake_handbrake_arch: handbrakeVersion.architecture,
             handbrake_timestamp: new Date().toISOString(),
-            handbrake_plugin_version: '4.0'
+            handbrake_plugin_version: '4.5'
         };
 
         // Statistical analysis for extended logging
@@ -2229,7 +2229,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
             handbrake_error_stack: error.stack,
             handbrake_processing_time: startTime ? Date.now() - startTime : 0,
             handbrake_timestamp: new Date().toISOString(),
-            handbrake_plugin_version: '4.0'
+            handbrake_plugin_version: '4.5'
         };
         
         return {
@@ -2241,4 +2241,5 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
 });
 
 exports.plugin = plugin;
+
 
