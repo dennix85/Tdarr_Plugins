@@ -448,9 +448,9 @@ const getContentId = (instance, fileName, inputs, logger) => __awaiter(void 0, v
         let id = -1;
 
         if (instance.type === 'sonarr') {
-            // parse returns episodes array - grab the first matched episode ID
-            const episodes = (parseResponse && parseResponse.data && parseResponse.data.episodes) || [];
-            id = episodes.length > 0 ? Number(episodes[0].id || -1) : -1;
+            id = Number(
+                (parseResponse && parseResponse.data && parseResponse.data.series && parseResponse.data.series.id) || -1
+            );
         } else {
             // Radarr / Whisparr
             id = Number(
@@ -554,9 +554,9 @@ const getContentId = (instance, fileName, inputs, logger) => __awaiter(void 0, v
 // Fetch content data and extract tag IDs
 const getContentTags = (instance, contentId, inputs, logger) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        // Sonarr: fetch the episode - response includes embedded series with its tags
+        // Tags live on the series (Sonarr) or movie (Radarr/Whisparr) — fetch accordingly
         const apiEndpoint = instance.type === 'sonarr'
-            ? `/api/v3/episode/${contentId}`
+            ? `/api/v3/series/${contentId}`
             : `/api/v3/movie/${contentId}`;
 
         const contentUrl = `${instance.host}${apiEndpoint}`;
@@ -570,18 +570,11 @@ const getContentTags = (instance, contentId, inputs, logger) => __awaiter(void 0
 
         const contentData = response.data;
 
-        const contentTitle = instance.type === 'sonarr'
-            ? `${(contentData.series && contentData.series.title) || 'Unknown'} S${String(contentData.seasonNumber || 0).padStart(2, '0')}E${String(contentData.episodeNumber || 0).padStart(2, '0')} - ${contentData.title || ''}`
-            : contentData.title;
+        const contentTitle = contentData.title || 'Unknown';
 
         logger.debug(`Retrieved content: "${contentTitle}"`);
 
-        const episodeTags = contentData.tags || [];
-        const seriesTags = (instance.type === 'sonarr' && contentData.series && contentData.series.tags)
-            ? contentData.series.tags
-            : [];
-
-        const allTagIds = [...new Set([...episodeTags, ...seriesTags])];
+        const allTagIds = [...new Set(contentData.tags || [])];
 
         logger.debug(`Raw tag IDs on content: [${allTagIds.join(', ')}]`);
 
