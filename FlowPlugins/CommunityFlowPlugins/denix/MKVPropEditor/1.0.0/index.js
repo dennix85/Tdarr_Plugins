@@ -106,7 +106,7 @@ const details = () => ({
             tooltip: '✅ Continue to next plugin - MKVPropEdit completed successfully',
         },
         {
-            number: 3,
+            number: 2,
             tooltip: '❌ Error occurred during processing',
         },
     ],
@@ -401,7 +401,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
             args.jobLog(logger.getOutput());
             return {
                 outputFileObj: args.inputFileObj,
-                outputNumber: 3,
+                outputNumber: 2,
                 variables: args.variables,
             };
         }
