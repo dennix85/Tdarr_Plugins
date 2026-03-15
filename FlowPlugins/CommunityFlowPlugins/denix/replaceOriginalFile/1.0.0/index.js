@@ -500,8 +500,9 @@ const plugin = async (args) => {
 
         const currentPath = args.inputFileObj._id;
         const originalFolder = fileUtils.getFileAbosluteDir(args.originalLibraryFile._id);
-        const fileName = fileUtils.getFileName(args.inputFileObj._id);
-        const container = fileUtils.getContainer(args.inputFileObj._id);
+        const normalizedCurrentPath = currentPath.replace(/\\/g, '/');
+        const fileName = fileUtils.getFileName(normalizedCurrentPath);
+        const container = fileUtils.getContainer(normalizedCurrentPath);
         const newPath = `${originalFolder}/${fileName}.${container}`;
         const tempPath = `${newPath}.tmp`;
 
