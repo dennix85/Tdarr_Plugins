@@ -227,7 +227,17 @@ const parseAndValidateArgs = (argsString) => {
 
         for (const arg of args) {
             if (arg.trim()) {
-                result.args.push(arg.trim());
+                let cleanedArg = arg.trim();
+
+                // Strip ONLY wrapping quotes (preserve inner content)
+                if (
+                    (cleanedArg.startsWith('"') && cleanedArg.endsWith('"')) ||
+                    (cleanedArg.startsWith("'") && cleanedArg.endsWith("'"))
+                ) {
+                    cleanedArg = cleanedArg.slice(1, -1);
+                }
+
+                result.args.push(cleanedArg);
                 
                 // Basic validation
                 if (arg.startsWith('--')) {
