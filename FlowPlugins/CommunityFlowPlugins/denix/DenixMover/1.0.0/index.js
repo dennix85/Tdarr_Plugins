@@ -117,7 +117,7 @@ const plugin = async (args) => {
         }
     } else {
         // Tier 1: rsync
-        const r1 = await run('rsync', ['-a', '--remove-source-files', source, dest]);
+        const r1 = await run('rsync', ['-W', '--remove-source-files', '--timeout=300', source, dest]);
         if (r1.code === 0) {
             args.jobLog('✅ Moved via rsync');
         } else {
