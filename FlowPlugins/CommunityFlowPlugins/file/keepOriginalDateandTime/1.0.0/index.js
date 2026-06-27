@@ -2,10 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.plugin = exports.details = void 0;
 
-const os = require('os');
 const { promises: fsp } = require('fs');
-// eslint-disable-next-line import/no-unresolved,import/no-extraneous-dependencies
-const touch = require('touch');
 
 const details = () => ({
   name: 'Keep Original File Dates And Times',
@@ -44,7 +41,7 @@ const plugin = async (args) => {
   // eslint-disable-next-line no-param-reassign
   args.inputs = lib.loadDefaultValues(args.inputs, details);
 
-  const { mtimeMs, ctimeMs } = args.originalLibraryFile.statSync;
+  const { mtimeMs } = args.originalLibraryFile.statSync;
 
   let currentMtimeMs;
   try {
@@ -68,15 +65,11 @@ const plugin = async (args) => {
   }
 
   try {
-    if (os.platform() === 'win32') {
-      await fsp.utimes(
-        args.inputFileObj._id,
-        ctimeMs / 1000,
-        mtimeMs / 1000,
-      );
-    } else {
-      touch.sync(args.inputFileObj._id, { mtimeMs, force: true });
-    }
+    await fsp.utimes(
+      args.inputFileObj._id,
+      mtimeMs / 1000,
+      mtimeMs / 1000,
+    );
   } catch (err) {
     args.jobLog(`Failed to update timestamps: ${err}`);
     return {
