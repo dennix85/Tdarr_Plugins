@@ -1,14 +1,13 @@
-import { promises as fsp } from 'fs';
-import os from 'os';
-// eslint-disable-next-line import/no-unresolved,import/no-extraneous-dependencies
-import touch from 'touch';
-import {
-  IpluginDetails,
-  IpluginInputArgs,
-  IpluginOutputArgs,
-} from '../../../../FlowHelpers/1.0.0/interfaces/interfaces';
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.plugin = exports.details = void 0;
 
-const details = ():IpluginDetails => ({
+const os = require('os');
+const { promises: fsp } = require('fs');
+// eslint-disable-next-line import/no-unresolved,import/no-extraneous-dependencies
+const touch = require('touch');
+
+const details = () => ({
   name: 'Keep Original File Dates And Times',
   description: 'Copies the original file dates and times to the working file '
     + 'after transcoding, so the output keeps the source mtime/ctime instead '
@@ -38,11 +37,11 @@ const details = ():IpluginDetails => ({
     },
   ],
 });
+exports.details = details;
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const plugin = async (args:IpluginInputArgs):Promise<IpluginOutputArgs> => {
+const plugin = async (args) => {
   const lib = require('../../../../../methods/lib')();
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars,no-param-reassign
+  // eslint-disable-next-line no-param-reassign
   args.inputs = lib.loadDefaultValues(args.inputs, details);
 
   const { mtimeMs, ctimeMs } = args.originalLibraryFile.statSync;
@@ -94,8 +93,4 @@ const plugin = async (args:IpluginInputArgs):Promise<IpluginOutputArgs> => {
     variables: args.variables,
   };
 };
-
-export {
-  details,
-  plugin,
-};
+exports.plugin = plugin;
