@@ -2,7 +2,12 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.plugin = exports.details = void 0;
 
+const os = require('os');
 const { promises: fsp } = require('fs');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+
+const execFileAsync = promisify(execFile);
 
 const details = () => ({
   name: 'Keep Original File Dates And Times',
@@ -41,7 +46,8 @@ const plugin = async (args) => {
   // eslint-disable-next-line no-param-reassign
   args.inputs = lib.loadDefaultValues(args.inputs, details);
 
-  const { mtimeMs } = args.originalLibraryFile.statSync;
+  const { mtimeMs, birthtimeMs } = args.originalLibraryFile.statSync;
+  args.jobLog(`Source file mtime: ${new Date(mtimeMs).toISOString()}, created: ${new Date(birthtimeMs).toISOString()}`);
 
   let currentMtimeMs;
   try {
@@ -54,6 +60,7 @@ const plugin = async (args) => {
       variables: args.variables,
     };
   }
+  args.jobLog(`Working file mtime: ${new Date(currentMtimeMs).toISOString()}`);
 
   if (currentMtimeMs === mtimeMs) {
     args.jobLog('Timestamps already match source, skipping update');
@@ -70,6 +77,17 @@ const plugin = async (args) => {
       mtimeMs / 1000,
       mtimeMs / 1000,
     );
+
+    if (os.platform() === 'win32') {
+      const creationTimeIso = new Date(birthtimeMs).toISOString();
+      await execFileAsync('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `(Get-Item -LiteralPath '${args.inputFileObj._id.replace(/'/g, "''")}').CreationTime = '${creationTimeIso}'`,
+      ]);
+      args.jobLog(`Creation time set to match source: ${creationTimeIso}`);
+    }
   } catch (err) {
     args.jobLog(`Failed to update timestamps: ${err}`);
     return {
@@ -79,7 +97,7 @@ const plugin = async (args) => {
     };
   }
 
-  args.jobLog('Timestamps updated to match source');
+  args.jobLog(`Timestamps updated to match source (mtime: ${new Date(mtimeMs).toISOString()}${os.platform() === 'win32' ? ', creation time also set' : ''})`);
   return {
     outputFileObj: args.inputFileObj,
     outputNumber: 1,
