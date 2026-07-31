@@ -36,7 +36,7 @@ const details = () => ({
             type: 'string',
             defaultValue: '/data/tv',
             inputUI: { type: 'text' },
-            tooltip: 'Destination directory on Linux nodes',
+            tooltip: 'Destination directory on Linux nodes. (Ignored if Replace Original File is enabled)',
         },
         {
             label: '🪟 Windows Target Directory',
@@ -44,7 +44,7 @@ const details = () => ({
             type: 'string',
             defaultValue: 'T:\\tv',
             inputUI: { type: 'text' },
-            tooltip: 'Destination directory on Windows nodes',
+            tooltip: 'Destination directory on Windows nodes. (Ignored if Replace Original File is enabled)',
         },
         {
             label: '📂 Keep Relative Path',
@@ -52,21 +52,33 @@ const details = () => ({
             type: 'boolean',
             defaultValue: false,
             inputUI: { type: 'switch' },
-            tooltip: 'Preserve subdirectory structure relative to the library folder',
+            tooltip: 'Preserve subdirectory structure relative to the library folder. (Ignored if Replace Original File is enabled)',
         },
         {
-            label: '🔄 Replace In-Place',
+            label: '🔄 Replace Original File',
             name: 'replaceInPlace',
             type: 'boolean',
             defaultValue: false,
             inputUI: { type: 'switch' },
-            tooltip: 'Replace the original library file in-place instead of moving to target directory. Overwrites the original directly via tiered move (robocopy/rsync). Ignores target directory settings when enabled.',
+            tooltip: 'Overwrites the original library file in-place instead of moving to target directory. Ignores Target Directory and Keep Relative Path settings.',
+        },
+        {
+            label: '🔐 Enable .bak Backup (Overwrite Protection)',
+            name: 'enableBakBackup',
+            type: 'boolean',
+            defaultValue: true,
+            inputUI: { type: 'switch' },
+            tooltip: 'Enabled by default. Backs up the original file to .bak before overwriting. If the move/verification fails, the .bak is restored and routes to Output 2. Disable only if disk space is strictly limited during overwrite.',
         },
     ],
     outputs: [
         {
             number: 1,
             tooltip: '✅ File moved successfully',
+        },
+        {
+            number: 2,
+            tooltip: '↩️ Move failed, original restored from .bak backup',
         },
     ],
 });
@@ -148,47 +160,6 @@ const plugin = async (args) => {
         }
     };
 
-    // ── SAFE MOVE HELPER (Transactional .bak backup) ─────────────────────
-    // Takes expectedSize explicitly so we don't query a deleted src file.
-    const safeMove = async (src, dst, originalId, expectedSize, label = '') => {
-        let bakPath = null;
-        const dstExists = fs.existsSync(dst);
-        
-        // If destination exists AND it is the exact same file as the original library file,
-        // we back it up first to prevent corruption if the move fails halfway.
-        if (dstExists && originalId && isSameFile(dst, originalId)) {
-            bakPath = `${originalId}.bak`;
-            // Clean up stale .bak from a previous crash
-            if (fs.existsSync(bakPath)) fs.unlinkSync(bakPath);
-            
-            fs.renameSync(originalId, bakPath);
-            args.jobLog(`🔐 Backed up original to ${path.basename(bakPath)} before overwrite`);
-        }
-
-        try {
-            await tieredMove(src, dst, label);
-            verifyFile(dst, expectedSize, 'verify');
-            args.jobLog(`✅ Verified new file at final path: ${fmtSize(expectedSize)}`);
-            
-            // Success! Clean up the backup
-            if (bakPath) {
-                fs.unlinkSync(bakPath);
-                args.jobLog(`🗑️ Deleted backup file after successful verification`);
-            }
-        } catch (err) {
-            // Failure! Restore the backup
-            if (bakPath) {
-                args.jobLog(`⚠️ Move/Verify failed! Restoring original from backup...`);
-                // Clean up the broken/partial new file if it exists
-                if (fs.existsSync(dst)) fs.unlinkSync(dst);
-                
-                fs.renameSync(bakPath, originalId);
-                args.jobLog(`✅ Original restored successfully.`);
-            }
-            throw err; // Re-throw to fail the job safely
-        }
-    };
-
     // Shared EXDEV-safe node move script
     const nodeScript = [
         `const fs=require('fs');`,
@@ -204,24 +175,7 @@ const plugin = async (args) => {
         `}`,
     ].join('');
 
-    // ── INPUT VALIDATION (fail fast before touching anything) ────────────
-    const sourceSize = fileSize(source); // Captured ONCE before any moves
-    if (sourceSize === 0) {
-        throw new Error(`Source file is empty or does not exist: ${source}`);
-    }
-
-    if (!args.inputs.replaceInPlace) {
-        if (!targetDir || targetDir.trim() === '') {
-            throw new Error(
-                `${isWindows ? 'windowsTargetDirectory' : 'linuxTargetDirectory'} is empty. ` +
-                `Set a valid target directory or enable "Replace In-Place" mode. ` +
-                `Refusing to proceed to prevent file loss.`
-            );
-        }
-    }
-
     // ── SHARED TIERED MOVE ────────────────────────────────────────────────
-    // robocopy/rsync → os native CLI → node EXDEV-safe fallback
     const tieredMove = async (src, dst, label = '') => {
         const tag = label ? `[${label}] ` : '';
         const dstDir = path.dirname(dst);
@@ -233,7 +187,6 @@ const plugin = async (args) => {
         }
 
         if (isWindows) {
-            // Tier 1: robocopy
             let t = timer();
             const r1 = await run('robocopy', [
                 path.dirname(src), dstDir, srcBase,
@@ -244,7 +197,6 @@ const plugin = async (args) => {
                 args.jobLog(`✅ ${tag}Moved via robocopy (code ${r1.code}) — ${fmtSize(bytes)} in ${fmtDuration(d1)} @ ${fmtSpeed(bytes, d1)}`);
                 return;
             }
-            // Tier 2: move CLI
             args.jobLog(`⚠️  ${tag}robocopy failed (code ${r1.code}) — trying move`);
             t = timer();
             const r2 = await run('cmd', ['/C', `move /Y "${src}" "${dst}"`]);
@@ -253,7 +205,6 @@ const plugin = async (args) => {
                 args.jobLog(`✅ ${tag}Moved via move CLI — ${fmtSize(bytes)} in ${fmtDuration(d2)} @ ${fmtSpeed(bytes, d2)}`);
                 return;
             }
-            // Tier 3: node
             args.jobLog(`⚠️  ${tag}move failed (code ${r2.code}) — trying node`);
             t = timer();
             const r3 = await run('node', ['-e', nodeScript, src, dst]);
@@ -261,7 +212,6 @@ const plugin = async (args) => {
             if (r3.code !== 0) throw new Error(`${tag}node fallback failed: ${r3.out}`);
             args.jobLog(`✅ ${tag}Moved via node fallback — ${fmtSize(bytes)} in ${fmtDuration(d3)} @ ${fmtSpeed(bytes, d3)}`);
         } else {
-            // Tier 1: rsync
             let t = timer();
             const r1 = await run('rsync', ['-W', '--remove-source-files', '--timeout=300', src, dst]);
             const d1 = t();
@@ -275,7 +225,6 @@ const plugin = async (args) => {
                 }
                 return;
             }
-            // Tier 2: mv
             args.jobLog(`⚠️  ${tag}rsync failed (code ${r1.code}) — trying mv`);
             t = timer();
             const r2 = await run('mv', ['-f', src, dst]);
@@ -284,7 +233,6 @@ const plugin = async (args) => {
                 args.jobLog(`✅ ${tag}Moved via mv — ${fmtSize(bytes)} in ${fmtDuration(d2)} @ ${fmtSpeed(bytes, d2)}`);
                 return;
             }
-            // Tier 3: node
             args.jobLog(`⚠️  ${tag}mv failed (code ${r2.code}) — trying node`);
             t = timer();
             const r3 = await run('node', ['-e', nodeScript, src, dst]);
@@ -294,30 +242,93 @@ const plugin = async (args) => {
         }
     };
 
-    let dest;
+    // ── SAFE MOVE HELPER (Optional Transactional .bak backup) ────────────
+    // Returns an object: { success: boolean, restored: boolean }
+    const safeMove = async (src, dst, originalId, expectedSize, label = '') => {
+        let bakPath = null;
+        const dstExists = fs.existsSync(dst);
+        
+        if (args.inputs.enableBakBackup && dstExists && originalId && isSameFile(dst, originalId)) {
+            bakPath = `${originalId}.bak`;
+            if (fs.existsSync(bakPath)) fs.unlinkSync(bakPath);
+            
+            fs.renameSync(originalId, bakPath);
+            args.jobLog(`🔐 Backed up original to ${path.basename(bakPath)} before overwrite`);
+        }
 
-    // Get original file size from Tdarr's variables for logging/comparison
+        try {
+            await tieredMove(src, dst, label);
+            verifyFile(dst, expectedSize, 'verify');
+            args.jobLog(`✅ Verified new file at final path: ${fmtSize(expectedSize)}`);
+            
+            if (bakPath) {
+                fs.unlinkSync(bakPath);
+                args.jobLog(`🗑️ Deleted backup file after successful verification`);
+            }
+            return { success: true, restored: false };
+        } catch (err) {
+            if (bakPath) {
+                args.jobLog(`⚠️ Move/Verify failed! Restoring original from backup...`);
+                if (fs.existsSync(dst)) fs.unlinkSync(dst);
+                
+                fs.renameSync(bakPath, originalId);
+                args.jobLog(`✅ Original restored successfully.`);
+                return { success: false, restored: true };
+            }
+            // No backup to restore, throw to hit default Tdarr error route
+            throw err; 
+        }
+    };
+
+    // ── INPUT VALIDATION ──────────────────────────────────────────────────
+    const sourceSize = fileSize(source); 
+    if (sourceSize === 0) {
+        throw new Error(`Source file is empty or does not exist: ${source}`);
+    }
+
+    if (!args.inputs.replaceInPlace) {
+        if (!targetDir || targetDir.trim() === '') {
+            throw new Error(
+                `${isWindows ? 'windowsTargetDirectory' : 'linuxTargetDirectory'} is empty. ` +
+                `Set a valid target directory or enable "Replace Original File" mode. ` +
+                `Refusing to proceed to prevent file loss.`
+            );
+        }
+    }
+
+    let dest;
     const originalSizeBytes = args.originalLibraryFile?.file_size ? args.originalLibraryFile.file_size * 1024 * 1024 : 0;
 
     if (args.inputs.replaceInPlace) {
-        // ── IN-PLACE REPLACE MODE ──────────────────────────────────────────
+        // ── REPLACE ORIGINAL FILE MODE ────────────────────────────────────
+        args.jobLog(`🔄 Replace Original File mode enabled. Ignoring Target Directory and Keep Relative Path settings.`);
+
         const originalId = args.originalLibraryFile?._id;
-        if (!originalId) throw new Error('replaceInPlace enabled but originalLibraryFile is missing');
+        if (!originalId) throw new Error('Replace Original File enabled but originalLibraryFile is missing');
 
         const originalDir = path.dirname(originalId);
         const sourceBase = path.basename(source, path.extname(source));
         const sourceExt = path.extname(source);
         const finalPath = path.join(originalDir, `${sourceBase}${sourceExt}`);
 
-        args.jobLog(`🔄 Replace in-place mode`);
         args.jobLog(`Source  : ${source} (${fmtSize(sourceSize)})`);
         args.jobLog(`Original: ${originalId} (${originalSizeBytes > 0 ? fmtSize(originalSizeBytes) : 'Unknown'})`);
         args.jobLog(`Final   : ${finalPath}`);
 
         const totalTimer = timer();
 
-        // Step 1 & 2: Safe Move & Verify (handles .bak backup/restore automatically)
-        await safeMove(source, finalPath, originalId, sourceSize, 'step1');
+        // Step 1 & 2: Safe Move & Verify
+        const moveResult = await safeMove(source, finalPath, originalId, sourceSize, 'step1');
+        
+        // If rollback occurred, route to Output 2
+        if (moveResult.restored) {
+            args.jobLog(`↩️ Routing to Output 2: Move failed, original restored from backup.`);
+            return {
+                outputFileObj: { ...args.inputFileObj, _id: originalId },
+                outputNumber: 2,
+                variables: args.variables,
+            };
+        }
 
         // Step 3: Delete original ONLY if it's a different physical file (container changed)
         if (!isSameFile(originalId, finalPath)) {
@@ -359,7 +370,17 @@ const plugin = async (args) => {
         const originalId = args.originalLibraryFile?._id;
         
         // Step 1 & 2: Safe Move & Verify
-        await safeMove(source, dest, originalId, sourceSize, 'move');
+        const moveResult = await safeMove(source, dest, originalId, sourceSize, 'move');
+
+        // If rollback occurred, route to Output 2
+        if (moveResult.restored) {
+            args.jobLog(`↩️ Routing to Output 2: Move failed, original restored from backup.`);
+            return {
+                outputFileObj: { ...args.inputFileObj, _id: originalId },
+                outputNumber: 2,
+                variables: args.variables,
+            };
+        }
 
         args.jobLog(`⏱️ Move total: ${fmtDuration(totalTimer())}`);
 
@@ -372,8 +393,6 @@ const plugin = async (args) => {
             shouldDeleteOriginal = false;
             args.jobLog(`✅ Original overwritten or same file path — no separate deletion needed`);
         } else {
-            // SAFETY NET: If the original file's size on disk matches the new file's size exactly, 
-            // it's highly likely they are the same file (e.g., case-insensitive paths). Skip deletion!
             const currentOriginalSize = fileSize(originalId);
             if (isWindows && currentOriginalSize > 0 && currentOriginalSize === sourceSize) {
                 shouldDeleteOriginal = false;
