@@ -60,7 +60,7 @@ const details = () => ({
             type: 'boolean',
             defaultValue: false,
             inputUI: { type: 'switch' },
-            tooltip: 'Replace the original library file in-place instead of moving to target directory. Uses atomic temp → delete → rename sequence. Ignores target directory settings when enabled.',
+            tooltip: 'Replace the original library file in-place instead of moving to target directory. Overwrites the original directly via tiered move (robocopy/rsync). Ignores target directory settings when enabled.',
         },
     ],
     outputs: [
@@ -87,7 +87,7 @@ const plugin = async (args) => {
     // ── METRICS HELPERS ───────────────────────────────────────────────────
     const timer = () => {
         const t = process.hrtime.bigint();
-        return () => Number(process.hrtime.bigint() - t) / 1e6; // ms
+        return () => Number(process.hrtime.bigint() - t) / 1e6;
     };
 
     const fmtDuration = (ms) => {
@@ -123,6 +123,37 @@ const plugin = async (args) => {
         proc.on('error', err => reject(err));
     });
 
+    // ── VERIFICATION HELPER ───────────────────────────────────────────────
+    // Throws if the file doesn't exist or size doesn't match expected.
+    // This is the guard that prevents data loss: we NEVER delete the original
+    // until this passes for the new file.
+    const verifyFile = (filePath, expectedSize, label = '') => {
+        const tag = label ? `[${label}] ` : '';
+        const actualSize = fileSize(filePath);
+        if (actualSize === 0) {
+            throw new Error(`${tag}File not found or empty after move: ${filePath}`);
+        }
+        if (expectedSize && actualSize !== expectedSize) {
+            throw new Error(`${tag}Size mismatch: expected ${expectedSize} bytes, got ${actualSize} bytes for ${filePath}`);
+        }
+        return actualSize;
+    };
+
+    // ── FILE IDENTITY HELPER ─────────────────────────────────────────────
+    // Compares absolute paths case-insensitively on Windows.
+    // This is critical because `fs.statSync` inodes can be `0` on network drives (SMB/NAS).
+    // Linux uses reliable inodes, but string comparison works just as well for absolute paths.
+    const isSameFile = (path1, path2) => {
+        try {
+            if (isWindows) {
+                return path.resolve(path1).toLowerCase() === path.resolve(path2).toLowerCase();
+            }
+            return path.resolve(path1) === path.resolve(path2);
+        } catch {
+            return false;
+        }
+    };
+
     // Shared EXDEV-safe node move script
     const nodeScript = [
         `const fs=require('fs');`,
@@ -138,19 +169,43 @@ const plugin = async (args) => {
         `}`,
     ].join('');
 
+    // ── INPUT VALIDATION (fail fast before touching anything) ────────────
+    const sourceSize = fileSize(source);
+    if (sourceSize === 0) {
+        throw new Error(`Source file is empty or does not exist: ${source}`);
+    }
+
+    if (!args.inputs.replaceInPlace) {
+        if (!targetDir || targetDir.trim() === '') {
+            throw new Error(
+                `${isWindows ? 'windowsTargetDirectory' : 'linuxTargetDirectory'} is empty. ` +
+                `Set a valid target directory or enable "Replace In-Place" mode. ` +
+                `Refusing to proceed to prevent file loss.`
+            );
+        }
+    }
+
     // ── SHARED TIERED MOVE ────────────────────────────────────────────────
     // robocopy/rsync → os native CLI → node EXDEV-safe fallback
-    // Used for every file move in both modes so behaviour is identical everywhere.
     const tieredMove = async (src, dst, label = '') => {
         const tag = label ? `[${label}] ` : '';
         const dstDir = path.dirname(dst);
+        const srcBase = path.basename(src);
         fs.mkdirSync(dstDir, { recursive: true });
         const bytes = fileSize(src);
+        if (bytes === 0) {
+            throw new Error(`${tag}Source file is empty or missing: ${src}`);
+        }
 
         if (isWindows) {
             // Tier 1: robocopy
+            // Robocopy preserves the source filename. Since we only ever call 
+            // tieredMove to keep the same filename now, actualPath === dst.
             let t = timer();
-            const r1 = await run('robocopy', [path.dirname(src), dstDir, path.basename(src), '/MOV', '/R:3', '/W:5', '/NP', '/NFL', '/NDL']);
+            const r1 = await run('robocopy', [
+                path.dirname(src), dstDir, srcBase,
+                '/MOV', '/R:3', '/W:5', '/NP', '/NFL', '/NDL'
+            ]);
             const d1 = t();
             if (r1.code >= 0 && r1.code <= 7) {
                 args.jobLog(`✅ ${tag}Moved via robocopy (code ${r1.code}) — ${fmtSize(bytes)} in ${fmtDuration(d1)} @ ${fmtSpeed(bytes, d1)}`);
@@ -179,7 +234,6 @@ const plugin = async (args) => {
             const d1 = t();
             if (r1.code === 0) {
                 args.jobLog(`✅ ${tag}Moved via rsync — ${fmtSize(bytes)} in ${fmtDuration(d1)} @ ${fmtSpeed(bytes, d1)}`);
-                // Clean up empty dirs left behind by --remove-source-files
                 const r1c = await run('find', [path.dirname(src), '-type', 'd', '-empty', '-delete']);
                 if (r1c.code === 0) {
                     args.jobLog(`🧹 ${tag}Cleaned up empty source directories`);
@@ -209,6 +263,9 @@ const plugin = async (args) => {
 
     let dest;
 
+    // Get original file size from Tdarr's variables for logging/comparison
+    const originalSizeBytes = args.originalLibraryFile?.file_size ? args.originalLibraryFile.file_size * 1024 * 1024 : 0;
+
     if (args.inputs.replaceInPlace) {
         // ── IN-PLACE REPLACE MODE ──────────────────────────────────────────
         const originalId = args.originalLibraryFile?._id;
@@ -217,34 +274,42 @@ const plugin = async (args) => {
         const originalDir = path.dirname(originalId);
         const sourceBase = path.basename(source, path.extname(source));
         const sourceExt = path.extname(source);
-        const tempPath = path.join(originalDir, `${sourceBase}.temp`);
         const finalPath = path.join(originalDir, `${sourceBase}${sourceExt}`);
 
         args.jobLog(`🔄 Replace in-place mode`);
-        args.jobLog(`Source  : ${source}`);
-        args.jobLog(`Temp    : ${tempPath}`);
-        args.jobLog(`Original: ${originalId}`);
+        args.jobLog(`Source  : ${source} (${fmtSize(sourceSize)})`);
+        args.jobLog(`Original: ${originalId} (${originalSizeBytes > 0 ? fmtSize(originalSizeBytes) : 'Unknown'})`);
         args.jobLog(`Final   : ${finalPath}`);
 
         const totalTimer = timer();
 
-        // Step 1: Move working file → .temp via full tiered stack (handles cache→network share EXDEV)
-        await tieredMove(source, tempPath, 'step1');
+        // Step 1: Move working file → final path
+        await tieredMove(source, finalPath, 'step1');
 
-        // Step 2: Delete original (handles container change — e.g. .mp4 when working is .mkv)
-        const t2 = timer();
-        try {
-            fs.unlinkSync(originalId);
-            args.jobLog(`🗑️ Deleted original file in ${fmtDuration(t2())}`);
-        } catch (err) {
-            if (err.code !== 'ENOENT') throw err;
-            args.jobLog('⚠️ Original file already gone (ENOENT) — continuing');
+        // Step 2: VERIFY
+        verifyFile(finalPath, sourceSize, 'verify');
+        args.jobLog(`✅ Verified new file at final path: ${fmtSize(sourceSize)}`);
+
+        // Step 3: Delete original ONLY if it's a different physical file
+        if (!isSameFile(originalId, finalPath)) {
+            // SAFETY NET: If the original file's size on disk matches the new file's size exactly, 
+            // it's highly likely they are the same file (e.g., case-insensitive paths). Skip deletion!
+            const currentOriginalSize = fileSize(originalId);
+            if (isWindows && currentOriginalSize > 0 && currentOriginalSize === sourceSize) {
+                args.jobLog(`⚠️ Original file size matches new file size (${fmtSize(sourceSize)}). Skipping deletion to prevent data loss.`);
+            } else {
+                const t2 = timer();
+                try {
+                    fs.unlinkSync(originalId);
+                    args.jobLog(`🗑️ Deleted original (container changed) in ${fmtDuration(t2())}`);
+                } catch (err) {
+                    if (err.code !== 'ENOENT') throw err;
+                    args.jobLog('⚠️ Original file already gone (ENOENT) — continuing');
+                }
+            }
+        } else {
+            args.jobLog(`✅ Original overwritten in-place (same file) — no separate deletion needed`);
         }
-
-        // Step 3: Rename .temp → final (always same filesystem, plain rename is safe)
-        const t3 = timer();
-        fs.renameSync(tempPath, finalPath);
-        args.jobLog(`✅ Renamed .temp to final path in ${fmtDuration(t3())}`);
 
         args.jobLog(`⏱️ In-place replace total: ${fmtDuration(totalTimer())}`);
 
@@ -252,12 +317,9 @@ const plugin = async (args) => {
 
     } else {
         // ── MOVE TO TARGET DIRECTORY MODE ─────────────────────────────────
-
-        // Build destination path
         let destDir = targetDir;
         if (args.inputs.keepRelativePath && args.librarySettings?.folder) {
             const rel = path.relative(args.librarySettings.folder, path.dirname(args.originalLibraryFile?._id || source));
-            // Guard against path traversal escaping library root
             if (rel.startsWith('..')) {
                 throw new Error(`Relative path escaped library root: ${rel}`);
             }
@@ -265,22 +327,49 @@ const plugin = async (args) => {
         }
         dest = path.join(destDir, path.basename(source));
 
-        args.jobLog(`Moving: ${source}`);
+        args.jobLog(`Moving: ${source} (${fmtSize(sourceSize)})`);
         args.jobLog(`To    : ${dest}`);
+        if (originalSizeBytes > 0) {
+            args.jobLog(`📊 Original Size: ${fmtSize(originalSizeBytes)} | New Size: ${fmtSize(sourceSize)}`);
+        }
 
         const totalTimer = timer();
         await tieredMove(source, dest);
+
+        // VERIFY
+        verifyFile(dest, sourceSize, 'verify');
+        args.jobLog(`✅ Verified file at destination: ${fmtSize(sourceSize)}`);
+
         args.jobLog(`⏱️ Move total: ${fmtDuration(totalTimer())}`);
 
-        // Clean up original file if container changed (e.g. .mp4 → .mkv)
+        // Delete original file safely
         const originalId = args.originalLibraryFile?._id;
-        if (originalId && originalId !== source) {
-            args.jobLog(`🗑️ Container changed — deleting original: ${originalId}`);
+        let shouldDeleteOriginal = true;
+
+        if (!originalId) {
+            shouldDeleteOriginal = false;
+        } else if (isSameFile(originalId, dest)) {
+            shouldDeleteOriginal = false;
+            args.jobLog(`✅ Original overwritten or same file path — no separate deletion needed`);
+        } else {
+            // SAFETY NET: If the original file's size on disk matches the new file's size exactly, 
+            // it's highly likely they are the same file (e.g., case-insensitive paths). Skip deletion!
+            const currentOriginalSize = fileSize(originalId);
+            if (isWindows && currentOriginalSize > 0 && currentOriginalSize === sourceSize) {
+                shouldDeleteOriginal = false;
+                args.jobLog(`⚠️ Original file size matches new file size (${fmtSize(sourceSize)}). Skipping deletion to prevent data loss.`);
+            }
+        }
+
+        if (shouldDeleteOriginal) {
+            args.jobLog(`🗑️ Deleting original: ${originalId}`);
             try {
                 fs.unlinkSync(originalId);
                 args.jobLog('✅ Original file deleted');
             } catch (err) {
-                args.jobLog(`⚠️ Could not delete original file (non-fatal): ${err.message}`);
+                if (err.code !== 'ENOENT') {
+                    args.jobLog(`⚠️ Could not delete original file (non-fatal): ${err.message}`);
+                }
             }
         }
     }
