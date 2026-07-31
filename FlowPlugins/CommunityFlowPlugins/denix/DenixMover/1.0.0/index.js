@@ -124,9 +124,6 @@ const plugin = async (args) => {
     });
 
     // ── VERIFICATION HELPER ───────────────────────────────────────────────
-    // Throws if the file doesn't exist or size doesn't match expected.
-    // This is the guard that prevents data loss: we NEVER delete the original
-    // until this passes for the new file.
     const verifyFile = (filePath, expectedSize, label = '') => {
         const tag = label ? `[${label}] ` : '';
         const actualSize = fileSize(filePath);
@@ -140,9 +137,6 @@ const plugin = async (args) => {
     };
 
     // ── FILE IDENTITY HELPER ─────────────────────────────────────────────
-    // Compares absolute paths case-insensitively on Windows.
-    // This is critical because `fs.statSync` inodes can be `0` on network drives (SMB/NAS).
-    // Linux uses reliable inodes, but string comparison works just as well for absolute paths.
     const isSameFile = (path1, path2) => {
         try {
             if (isWindows) {
@@ -151,6 +145,47 @@ const plugin = async (args) => {
             return path.resolve(path1) === path.resolve(path2);
         } catch {
             return false;
+        }
+    };
+
+    // ── SAFE MOVE HELPER (Transactional .bak backup) ─────────────────────
+    // Takes expectedSize explicitly so we don't query a deleted src file.
+    const safeMove = async (src, dst, originalId, expectedSize, label = '') => {
+        let bakPath = null;
+        const dstExists = fs.existsSync(dst);
+        
+        // If destination exists AND it is the exact same file as the original library file,
+        // we back it up first to prevent corruption if the move fails halfway.
+        if (dstExists && originalId && isSameFile(dst, originalId)) {
+            bakPath = `${originalId}.bak`;
+            // Clean up stale .bak from a previous crash
+            if (fs.existsSync(bakPath)) fs.unlinkSync(bakPath);
+            
+            fs.renameSync(originalId, bakPath);
+            args.jobLog(`🔐 Backed up original to ${path.basename(bakPath)} before overwrite`);
+        }
+
+        try {
+            await tieredMove(src, dst, label);
+            verifyFile(dst, expectedSize, 'verify');
+            args.jobLog(`✅ Verified new file at final path: ${fmtSize(expectedSize)}`);
+            
+            // Success! Clean up the backup
+            if (bakPath) {
+                fs.unlinkSync(bakPath);
+                args.jobLog(`🗑️ Deleted backup file after successful verification`);
+            }
+        } catch (err) {
+            // Failure! Restore the backup
+            if (bakPath) {
+                args.jobLog(`⚠️ Move/Verify failed! Restoring original from backup...`);
+                // Clean up the broken/partial new file if it exists
+                if (fs.existsSync(dst)) fs.unlinkSync(dst);
+                
+                fs.renameSync(bakPath, originalId);
+                args.jobLog(`✅ Original restored successfully.`);
+            }
+            throw err; // Re-throw to fail the job safely
         }
     };
 
@@ -170,7 +205,7 @@ const plugin = async (args) => {
     ].join('');
 
     // ── INPUT VALIDATION (fail fast before touching anything) ────────────
-    const sourceSize = fileSize(source);
+    const sourceSize = fileSize(source); // Captured ONCE before any moves
     if (sourceSize === 0) {
         throw new Error(`Source file is empty or does not exist: ${source}`);
     }
@@ -199,8 +234,6 @@ const plugin = async (args) => {
 
         if (isWindows) {
             // Tier 1: robocopy
-            // Robocopy preserves the source filename. Since we only ever call 
-            // tieredMove to keep the same filename now, actualPath === dst.
             let t = timer();
             const r1 = await run('robocopy', [
                 path.dirname(src), dstDir, srcBase,
@@ -283,29 +316,18 @@ const plugin = async (args) => {
 
         const totalTimer = timer();
 
-        // Step 1: Move working file → final path
-        await tieredMove(source, finalPath, 'step1');
+        // Step 1 & 2: Safe Move & Verify (handles .bak backup/restore automatically)
+        await safeMove(source, finalPath, originalId, sourceSize, 'step1');
 
-        // Step 2: VERIFY
-        verifyFile(finalPath, sourceSize, 'verify');
-        args.jobLog(`✅ Verified new file at final path: ${fmtSize(sourceSize)}`);
-
-        // Step 3: Delete original ONLY if it's a different physical file
+        // Step 3: Delete original ONLY if it's a different physical file (container changed)
         if (!isSameFile(originalId, finalPath)) {
-            // SAFETY NET: If the original file's size on disk matches the new file's size exactly, 
-            // it's highly likely they are the same file (e.g., case-insensitive paths). Skip deletion!
-            const currentOriginalSize = fileSize(originalId);
-            if (isWindows && currentOriginalSize > 0 && currentOriginalSize === sourceSize) {
-                args.jobLog(`⚠️ Original file size matches new file size (${fmtSize(sourceSize)}). Skipping deletion to prevent data loss.`);
-            } else {
-                const t2 = timer();
-                try {
-                    fs.unlinkSync(originalId);
-                    args.jobLog(`🗑️ Deleted original (container changed) in ${fmtDuration(t2())}`);
-                } catch (err) {
-                    if (err.code !== 'ENOENT') throw err;
-                    args.jobLog('⚠️ Original file already gone (ENOENT) — continuing');
-                }
+            const t2 = timer();
+            try {
+                fs.unlinkSync(originalId);
+                args.jobLog(`🗑️ Deleted original (container changed) in ${fmtDuration(t2())}`);
+            } catch (err) {
+                if (err.code !== 'ENOENT') throw err;
+                args.jobLog('⚠️ Original file already gone (ENOENT) — continuing');
             }
         } else {
             args.jobLog(`✅ Original overwritten in-place (same file) — no separate deletion needed`);
@@ -334,16 +356,14 @@ const plugin = async (args) => {
         }
 
         const totalTimer = timer();
-        await tieredMove(source, dest);
-
-        // VERIFY
-        verifyFile(dest, sourceSize, 'verify');
-        args.jobLog(`✅ Verified file at destination: ${fmtSize(sourceSize)}`);
+        const originalId = args.originalLibraryFile?._id;
+        
+        // Step 1 & 2: Safe Move & Verify
+        await safeMove(source, dest, originalId, sourceSize, 'move');
 
         args.jobLog(`⏱️ Move total: ${fmtDuration(totalTimer())}`);
 
         // Delete original file safely
-        const originalId = args.originalLibraryFile?._id;
         let shouldDeleteOriginal = true;
 
         if (!originalId) {
