@@ -149,13 +149,22 @@ const plugin = async (args) => {
         try { return fs.statSync(filePath).size; } catch { return 0; }
     };
 
-    const run = (cmd, cmdArgs) => new Promise((resolve, reject) => {
-        const proc = spawn(cmd, cmdArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const run = (cmd, cmdArgs) => new Promise((resolve) => {
+        let proc;
+        try {
+            proc = spawn(cmd, cmdArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+        } catch (err) {
+            resolve({ code: -1, out: `spawn error: ${err.message}`, spawnError: true });
+            return;
+        }
         let out = '';
         proc.stdout.on('data', d => { out += d; });
         proc.stderr.on('data', d => { out += d; });
         proc.on('close', code => resolve({ code, out }));
-        proc.on('error', err => reject(err));
+        // Binary missing (ENOENT), no permission (EACCES), etc. — resolve as a
+        // failed tier instead of rejecting, so the rsync/mv/node fallback chain
+        // (and robocopy/move/node on Windows) actually gets a chance to run.
+        proc.on('error', err => resolve({ code: -1, out: `spawn error: ${err.message}`, spawnError: true }));
     });
 
     // Wraps run() to always log the invoked command and full stdout/stderr when extendedLogging is on
