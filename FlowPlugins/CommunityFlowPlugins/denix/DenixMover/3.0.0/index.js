@@ -239,11 +239,34 @@ const plugin = async (args) => {
                 '/MOV', '/R:3', '/W:5', '/NP', '/NFL', '/NDL'
             ], `${label}:robocopy`);
             const d1 = t();
-            if (r1.code >= 0 && r1.code <= 7) {
+            // Robocopy exit codes are a bitmask, not a simple pass/fail scale:
+            //   bit 1 (1)  = files copied okay
+            //   bit 2 (2)  = extra files/dirs in destination (informational)
+            //   bit 4 (4)  = mismatched files/dirs detected (ambiguous on its own)
+            //   bit 8 (8)  = copy errors, retries exhausted (real failure)
+            //   bit 16     = fatal error
+            // Codes 0-3 are unambiguous success. For 4-7, don't trust the code
+            // alone — check what actually happened on disk: with /MOV, robocopy
+            // deletes the source as it copies, so if the destination now holds a
+            // file of the expected size, the move genuinely succeeded and the
+            // mismatch bit was about something else (e.g. a stale leftover in the
+            // destination dir). Only treat it as a failure if the destination
+            // doesn't actually have the file.
+            if (r1.code >= 0 && r1.code <= 3) {
                 args.jobLog(`✅ ${tag}Moved via robocopy (code ${r1.code}) — ${fmtSize(bytes)} in ${fmtDuration(d1)} @ ${fmtSpeed(bytes, d1)}`);
                 return;
             }
-            args.jobLog(`⚠️  ${tag}robocopy failed (code ${r1.code}): ${(r1.out || '').trim() || 'no output'} — trying move`);
+            if (r1.code >= 4 && r1.code <= 7) {
+                const dstSize = fileSize(dst);
+                if (dstSize === bytes) {
+                    args.jobLog(`⚠️  ${tag}robocopy reported mismatched files (code ${r1.code}) but destination verified at correct size — accepting as success: ${(r1.out || '').trim() || 'no output'}`);
+                    args.jobLog(`✅ ${tag}Moved via robocopy (code ${r1.code}) — ${fmtSize(bytes)} in ${fmtDuration(d1)} @ ${fmtSpeed(bytes, d1)}`);
+                    return;
+                }
+                args.jobLog(`⚠️  ${tag}robocopy reported mismatched files (code ${r1.code}) and destination size doesn't match (expected ${fmtSize(bytes)}, got ${fmtSize(dstSize)}) — treating as failure: ${(r1.out || '').trim() || 'no output'}`);
+            } else {
+                args.jobLog(`⚠️  ${tag}robocopy failed (code ${r1.code}): ${(r1.out || '').trim() || 'no output'} — trying move`);
+            }
             t = timer();
             const r2 = await runLogged('cmd', ['/C', `move /Y "${src}" "${dst}"`], `${label}:move`);
             const d2 = t();
@@ -293,16 +316,28 @@ const plugin = async (args) => {
     const safeMove = async (src, dst, originalId, expectedSize, label = '') => {
         let bakPath = null;
         const dstExists = fs.existsSync(dst);
-        vlog(`🔍 ${label ? `[${label}] ` : ''}safeMove: dst=${dst} exists=${dstExists} originalId=${originalId || '(none)'} expectedSize=${expectedSize}`);
+        const srcIsOriginal = originalId && isSameFile(src, originalId);
+        vlog(`🔍 ${label ? `[${label}] ` : ''}safeMove: dst=${dst} exists=${dstExists} originalId=${originalId || '(none)'} expectedSize=${expectedSize} srcIsOriginal=${srcIsOriginal}`);
 
-        if (args.inputs.enableBakBackup && dstExists && originalId && isSameFile(dst, originalId)) {
+        // Source, original, and destination are all the same physical file —
+        // no upstream plugin actually changed the container. There is nothing
+        // to move and nothing to back up from; backing up here would rename
+        // the only copy of the file out from under itself, causing the
+        // subsequent move to fail on a zero-byte source.
+        if (srcIsOriginal && isSameFile(src, dst)) {
+            verifyFile(dst, expectedSize, 'verify');
+            args.jobLog(`✅ Source, original, and destination are the same file — nothing to move`);
+            return { success: true, restored: false };
+        }
+
+        if (args.inputs.enableBakBackup && dstExists && originalId && isSameFile(dst, originalId) && !srcIsOriginal) {
             bakPath = `${originalId}.bak`;
             if (fs.existsSync(bakPath)) fs.unlinkSync(bakPath);
             
             fs.renameSync(originalId, bakPath);
             args.jobLog(`🔐 Backed up original to ${path.basename(bakPath)} before overwrite`);
         } else {
-            vlog(`🔍 ${label ? `[${label}] ` : ''}No backup taken (bakBackup=${args.inputs.enableBakBackup}, dstExists=${dstExists}, sameFile=${originalId ? isSameFile(dst, originalId) : 'n/a'})`);
+            vlog(`🔍 ${label ? `[${label}] ` : ''}No backup taken (bakBackup=${args.inputs.enableBakBackup}, dstExists=${dstExists}, sameFile=${originalId ? isSameFile(dst, originalId) : 'n/a'}, srcIsOriginal=${srcIsOriginal})`);
         }
 
         try {
@@ -326,7 +361,11 @@ const plugin = async (args) => {
                 args.jobLog(`✅ Original restored successfully.`);
                 return { success: false, restored: true, error: err.message };
             }
-            // No backup to restore, throw to hit default Tdarr error route
+            // No backup was taken (either enableBakBackup is off, or this wasn't
+            // an in-place overwrite of originalId) — so nothing was renamed away
+            // and the original file was never touched. It's safe to just rethrow
+            // here and let Tdarr's default error handling take over; there is no
+            // partial state to clean up or restore.
             throw err; 
         }
     };
@@ -348,7 +387,10 @@ const plugin = async (args) => {
     }
 
     let dest;
-    const originalSizeBytes = args.originalLibraryFile?.file_size ? args.originalLibraryFile.file_size * 1024 * 1024 : 0;
+    const MB_TO_BYTES = 1024 * 1024;
+    // Tdarr's originalLibraryFile.file_size is reported in MB; convert once here
+    // so every downstream log/comparison works in plain bytes like fileSize() does.
+    const originalSizeBytes = args.originalLibraryFile?.file_size ? args.originalLibraryFile.file_size * MB_TO_BYTES : 0;
 
     if (args.inputs.replaceInPlace) {
         // ── REPLACE ORIGINAL FILE MODE ────────────────────────────────────
@@ -365,6 +407,21 @@ const plugin = async (args) => {
         args.jobLog(`Source  : ${source} (${fmtSize(sourceSize)})`);
         args.jobLog(`Original: ${originalId} (${originalSizeBytes > 0 ? fmtSize(originalSizeBytes) : 'Unknown'})`);
         args.jobLog(`Final   : ${finalPath}`);
+
+        // Early same-file short-circuit: if source, original, and the computed
+        // final path are all the same physical file, no upstream plugin actually
+        // changed the container — there is nothing to move, back up, or verify
+        // beyond confirming the file is still there. Skip safeMove entirely and
+        // pass the file straight through to the next plugin.
+        if (isSameFile(source, originalId) && isSameFile(source, finalPath)) {
+            verifyFile(finalPath, sourceSize, 'unchanged');
+            args.jobLog(`✅ File unchanged by upstream plugins — passing through without a move`);
+            return {
+                outputFileObj: { ...args.inputFileObj, _id: finalPath },
+                outputNumber: 1,
+                variables: args.variables,
+            };
+        }
 
         const totalTimer = timer();
 
@@ -417,9 +474,23 @@ const plugin = async (args) => {
             args.jobLog(`📊 Original Size: ${fmtSize(originalSizeBytes)} | New Size: ${fmtSize(sourceSize)}`);
         }
 
-        const totalTimer = timer();
         const originalId = args.originalLibraryFile?._id;
-        
+
+        // Early same-file short-circuit: source, original, and the computed
+        // destination are all the same physical file — nothing changed upstream,
+        // so there's nothing to move. Pass the file straight through.
+        if (isSameFile(source, originalId) && isSameFile(source, dest)) {
+            verifyFile(dest, sourceSize, 'unchanged');
+            args.jobLog(`✅ File unchanged by upstream plugins — passing through without a move`);
+            return {
+                outputFileObj: { ...args.inputFileObj, _id: dest },
+                outputNumber: 1,
+                variables: args.variables,
+            };
+        }
+
+        const totalTimer = timer();
+
         // Step 1 & 2: Safe Move & Verify
         const moveResult = await safeMove(source, dest, originalId, sourceSize, 'move');
 
