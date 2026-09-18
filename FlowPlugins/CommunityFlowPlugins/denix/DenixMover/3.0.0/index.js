@@ -607,7 +607,7 @@ const plugin = async (args) => {
     }
 
     let dest;
-    const MB_TO_BYTES = 1024 * 1024;
+    const MB_TO_BYTES = 1000 * 1000;
     // Tdarr's originalLibraryFile.file_size is reported in MB; convert once here
     // so every downstream log/comparison works in plain bytes like fileSize() does.
     const originalSizeBytes = args.originalLibraryFile?.file_size ? args.originalLibraryFile.file_size * MB_TO_BYTES : 0;
