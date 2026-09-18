@@ -10,6 +10,16 @@
 //  3. .bak cleanup after verification is now non-fatal + retried.
 //  4. Pre-backup stale .bak removal and restore-path destination removal are
 //     retried with fatal:true (those MUST succeed to keep the backup safe).
+//  5. Optional Discord webhook notifications (discordWebhookUrl input) for
+//     non-fatal leftovers, fatal delete failures, and Output 2 rollbacks.
+//     Fire-and-forget — a failing webhook can never fail the job. Sends are
+//     paced (~2.1s gap) for Discord's rate limit, have a 5s timeout, and
+//     non-2xx responses are logged so a dead webhook URL can't fail silently.
+//  6. New failFlowOnUndeletedFile toggle (default off): when on, a delete
+//     that still fails after all retries throws and fails the flow (Discord
+//     error notification fires either way).
+//  7. New deleteRetries / deleteRetryDelay inputs (defaults 5 retries,
+//     3s apart) so the lock-retry behavior is user-configurable.
 // ─────────────────────────────────────────────────────────────────────────────
 const details = () => ({
     name: '🛡️ DeNiX File Mover: Native CLI Move Operations',
@@ -90,6 +100,38 @@ const details = () => ({
             inputUI: { type: 'switch' },
             tooltip: 'Logs the full command line, complete stdout/stderr, and file permission/ownership details for every move attempt (successful or not). Leave off for normal use — this is noisy, turn it on when troubleshooting a failing move.',
         },
+        {
+            label: '💬 Discord Webhook URL (optional)',
+            name: 'discordWebhookUrl',
+            type: 'string',
+            defaultValue: '',
+            inputUI: { type: 'text' },
+            tooltip: 'Paste a Discord webhook URL to get notified when a file is left in place after delete retries, a delete fails fatally, or a move rolls back to Output 2. Leave empty to disable. The webhook URL is never written to job logs.',
+        },
+        {
+            label: '🧨 Fail Flow If File Cannot Be Deleted',
+            name: 'failFlowOnUndeletedFile',
+            type: 'boolean',
+            defaultValue: false,
+            inputUI: { type: 'switch' },
+            tooltip: 'OFF (default): a file that stays locked after all delete retries is left in place and the flow continues with a warning + Discord message. ON: the same situation throws and fails the flow (transcodeError), so the job is retried/flagged instead of leaving duplicates behind. A Discord notification is sent either way.',
+        },
+        {
+            label: '🔁 Delete Retry Count',
+            name: 'deleteRetries',
+            type: 'number',
+            defaultValue: 5,
+            inputUI: { type: 'text' },
+            tooltip: 'How many times to retry deleting a locked file before giving up. Default 5.',
+        },
+        {
+            label: '⏱️ Delete Retry Delay (seconds)',
+            name: 'deleteRetryDelay',
+            type: 'number',
+            defaultValue: 3,
+            inputUI: { type: 'text' },
+            tooltip: 'Seconds to wait between delete retries. Default 3. Total worst-case wait = retries × delay.',
+        },
     ],
     outputs: [
         {
@@ -163,6 +205,82 @@ const plugin = async (args) => {
 
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+    // ── DISCORD WEBHOOK HELPER ─────────────────────────────────────────
+    // Fire-and-forget: never awaited by the flow, never throws, and never
+    // logs the webhook URL. Disabled entirely when the input is empty.
+    const webhookUrl = (args.inputs.discordWebhookUrl || '').trim();
+    const DISCORD_GAP_MS = 2100; // stays under Discord's ~30 msg/min webhook limit
+    let notifyChain = Promise.resolve();
+
+    const deliverDiscord = async (level, title, fields) => {
+        const colors = { info: 0x3498db, warn: 0xf39c12, error: 0xe91e63 };
+        const payload = {
+            username: 'Tdarr — DeNiX Mover',
+            embeds: [{
+                title: title.slice(0, 256),
+                color: colors[level] || colors.info,
+                fields: Object.entries(fields || {}).map(([name, value]) => ({
+                    name: name.slice(0, 256),
+                    value: String(value).slice(0, 1024),
+                    inline: false,
+                })),
+                timestamp: new Date().toISOString(),
+            }],
+        };
+        try {
+            if (typeof fetch === 'function') {
+                const res = await fetch(webhookUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                    signal: (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function')
+                        ? AbortSignal.timeout(5000)
+                        : undefined,
+                });
+                if (!res.ok) {
+                    args.jobLog(`⚠️ Discord webhook rejected a notification (HTTP ${res.status}) — check the webhook URL config`);
+                }
+            } else {
+                // Node < 18 fallback (Tdarr nodes ship modern Node, but be safe)
+                const url = new URL(webhookUrl);
+                const mod = url.protocol === 'http:' ? require('http') : require('https');
+                const body = JSON.stringify(payload);
+                await new Promise((resolve, reject) => {
+                    const req = mod.request(url, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Content-Length': Buffer.byteLength(body),
+                        },
+                    }, (res) => {
+                        res.resume();
+                        res.on('end', () => {
+                            if (res.statusCode < 200 || res.statusCode >= 300) {
+                                args.jobLog(`⚠️ Discord webhook rejected a notification (HTTP ${res.statusCode}) — check the webhook URL config`);
+                            }
+                            resolve();
+                        });
+                    });
+                    req.setTimeout(5000, () => req.destroy(new Error('webhook request timed out')));
+                    req.on('error', reject);
+                    req.write(body);
+                    req.end();
+                });
+            }
+        } catch (err) {
+            args.jobLog(`⚠️ Discord notification failed (non-fatal): ${err.message}`);
+        }
+    };
+
+    // Queue sends so a burst of warnings (e.g. a whole library hitting EBUSY
+    // in one run) can't trip Discord's rate limiter and get dropped silently.
+    const notifyDiscord = (level, title, fields) => {
+        if (!webhookUrl) return;
+        notifyChain = notifyChain
+            .then(() => deliverDiscord(level, title, fields))
+            .then(() => sleep(DISCORD_GAP_MS), () => sleep(DISCORD_GAP_MS));
+    };
+
     // ── LOCK-RESILIENT DELETE HELPER ─────────────────────────────────────
     // Windows AV scanners, the Search indexer, and media servers can hold a
     // brief exclusive handle on a file right after it is written/closed,
@@ -170,11 +288,17 @@ const plugin = async (args) => {
     // otherwise-complete job, retry a few times, then degrade gracefully.
     //
     //   fatal: false → returns true/false, logs a non-fatal warning on failure
+    //                 (Discord warn notification; upgraded to a thrown error
+    //                 if the failFlowOnUndeletedFile input is enabled)
     //   fatal: true  → rethrows after retries (use only where failure would
     //                  corrupt state, e.g. restore-path cleanup or pre-backup
     //                  stale .bak removal)
-    const deleteFile = async (filePath, label = '', { retries = 5, delayMs = 3000, fatal = false } = {}) => {
+    const deleteFile = async (filePath, label = '', { retries, delayMs, fatal = false } = {}) => {
         const tag = label ? `[${label}] ` : '';
+        // User-configurable via inputs; clamp to sane bounds so a typo can't
+        // stall a worker for an hour (max 20 retries × 60s = ~20 min).
+        retries = Math.max(0, Math.min(Number(retries ?? args.inputs.deleteRetries ?? 5) || 0, 20));
+        delayMs = Math.max(0, Math.min(Number(delayMs ?? (args.inputs.deleteRetryDelay ?? 3) * 1000) || 0, 60000));
         const transientCodes = isWindows ? ['EBUSY', 'EPERM', 'EACCES'] : ['EBUSY', 'EPERM'];
 
         try {
@@ -204,9 +328,29 @@ const plugin = async (args) => {
                 }
             }
 
-            const msg = `${tag}Could not delete "${filePath}" (${lastErr.code || lastErr.message}) — left in place`;
-            if (fatal) throw new Error(msg);
+            // failFlowOnUndeletedFile upgrades the non-fatal leftover path to a
+            // hard failure (the user prefers a flagged/retryable job over a
+            // duplicate left in the library). Already-fatal call sites are
+            // unaffected — they were fatal for data-safety reasons either way.
+            const effectiveFatal = fatal || !!args.inputs.failFlowOnUndeletedFile;
+            const msg = `${tag}Could not delete "${filePath}" (${lastErr.code || lastErr.message})`
+                + (effectiveFatal ? '' : ' — left in place');
+            if (effectiveFatal) {
+                notifyDiscord('error', '🛑 Delete failed — job failed (file could not be removed)', {
+                    'File': filePath,
+                    'Stage': label || 'unknown',
+                    'Error': `${lastErr.code || ''} ${lastErr.message}`.trim(),
+                    'Reason': fatal ? 'required to protect data (backup/restore safety)' : 'failFlowOnUndeletedFile is enabled',
+                });
+                throw new Error(msg);
+            }
             args.jobLog(`⚠️ ${msg} (non-fatal)`);
+            notifyDiscord('warn', '⚠️ File left in place — delete failed after retries', {
+                'File': filePath,
+                'Stage': label || 'unknown',
+                'Error': `${lastErr.code || ''} ${lastErr.message}`.trim(),
+                'Action needed': 'Delete it manually (your [TDARR] filename filter may skip this folder forever)',
+            });
             return false;
         }
     };
@@ -507,6 +651,11 @@ const plugin = async (args) => {
         // If rollback occurred, route to Output 2
         if (moveResult.restored) {
             args.jobLog(`↩️ Routing to Output 2: Move failed (${moveResult.error}), original restored from backup.`);
+            notifyDiscord('error', '↩️ Move failed — original restored from .bak (Output 2)', {
+                'Source': source,
+                'Original': originalId,
+                'Error': moveResult.error || 'unknown',
+            });
             return {
                 outputFileObj: { ...args.inputFileObj, _id: originalId },
                 outputNumber: 2,
@@ -576,6 +725,11 @@ const plugin = async (args) => {
         // If rollback occurred, route to Output 2
         if (moveResult.restored) {
             args.jobLog(`↩️ Routing to Output 2: Move failed (${moveResult.error}), original restored from backup.`);
+            notifyDiscord('error', '↩️ Move failed — original restored from .bak (Output 2)', {
+                'Source': source,
+                'Original': originalId,
+                'Error': moveResult.error || 'unknown',
+            });
             return {
                 outputFileObj: { ...args.inputFileObj, _id: originalId },
                 outputNumber: 2,
