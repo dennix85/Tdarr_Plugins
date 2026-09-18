@@ -276,7 +276,7 @@ const plugin = async (args) => {
         `if(err.code==='EXDEV'){`,
         `fs.copyFileSync(process.argv[1],process.argv[2]);`,
         `fs.unlinkSync(process.argv[1]);`,
-        `}else{throw err;`,
+        `}else{throw err;}`,
         `}`,
     ].join('');
 
@@ -336,7 +336,7 @@ const plugin = async (args) => {
                 args.jobLog(`✅ ${tag}Moved via move CLI — ${fmtSize(bytes)} in ${fmtDuration(d2)} @ ${fmtSpeed(bytes, d2)}`);
                 return;
             }
-            args.jobLog(`⚠️  ${tag}move failed (code ${r2.code}): ${(r1.out || '').trim() || 'no output'} — trying node`);
+            args.jobLog(`⚠️  ${tag}move failed (code ${r2.code}): ${(r2.out || '').trim() || 'no output'} — trying node`);
             t = timer();
             const r3 = await runLogged('node', ['-e', nodeScript, src, dst], `${label}:node`);
             const d3 = t();
