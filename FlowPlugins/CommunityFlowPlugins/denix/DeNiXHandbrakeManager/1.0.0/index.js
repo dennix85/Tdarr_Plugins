@@ -21,7 +21,7 @@ const { CLI } = require("../../../../FlowHelpers/1.0.0/cliUtils");
 
 // Plugin details with enhanced DeNiX styling
 const details = () => ({
-    name: '🎬 DeNiX Enhanced HandBrake: Smart Encoder with Resolution & Bitrate Control v4.0',
+    name: '🎬 DeNiX Enhanced HandBrake: Smart Encoder with Resolution & Bitrate Control v4.5',
     description: 'Advanced HandBrake encoding system with intelligent resolution-based quality, smart bitrate filtering, comprehensive logging, and enhanced performance monitoring. Features quality-based defaults and modern codec support with detailed progress tracking.',
     style: {
         borderColor: '#FF6B35',
@@ -2015,7 +2015,14 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
         logger.subsection('Step 7: Final analysis and comprehensive reporting');
 
         // Calculate compression statistics
-        const originalSize = args.inputFileObj.file_size || 0;
+        // NOTE: args.inputFileObj.file_size is Tdarr's cached DB value and can go
+        // stale mid-flow. Stat the actual source file HandBrake just read from.
+        let originalSize = args.inputFileObj.file_size || 0;
+        try {
+            originalSize = fs.statSync(args.inputFileObj._id).size;
+        } catch (statError) {
+            logger.warn(`⚠️ Could not stat input file directly, falling back to cached file_size: ${statError.message}`);
+        }
         const compressionRatio = originalSize > 0 ? outputFileSize / originalSize : 0;
         const spaceSaved = originalSize - outputFileSize;
         const compressionPercent = originalSize > 0 ? ((spaceSaved / originalSize) * 100) : 0;
