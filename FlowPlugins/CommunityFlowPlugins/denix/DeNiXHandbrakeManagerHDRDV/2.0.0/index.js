@@ -159,6 +159,24 @@ const details = () => ({
             tooltip: 'Quality setting for 4K DV/HDR content (1=highest quality, 30=lowest quality). Lower values preserve HDR detail.',
         },
 
+        // Bitrate skip thresholds (video stream bitrate, not container)
+        {
+            label: '🎯 HEVC Skip Bitrate (kbps)',
+            name: 'hevcSkipBitrate',
+            type: 'number',
+            defaultValue: 0,
+            inputUI: { type: 'text' },
+            tooltip: 'Video stream bitrate (NOT the container) in kbps. If the source is already HEVC/H.265 and its video bitrate is at or below this value, encoding is skipped and the file goes straight to the next plugin (output 2).\\n\\n0 = disabled (always encode).',
+        },
+        {
+            label: '🎯 AV1 Skip Bitrate (kbps)',
+            name: 'av1SkipBitrate',
+            type: 'number',
+            defaultValue: 0,
+            inputUI: { type: 'text' },
+            tooltip: 'Video stream bitrate (NOT the container) in kbps. If the source is already AV1 and its video bitrate is at or below this value, encoding is skipped and the file goes straight to the next plugin (output 2).\\n\\n0 = disabled (always encode).',
+        },
+
         // Progress and Timeout
         {
             label: '⏱️ Progress Timeout (minutes)',
@@ -213,7 +231,7 @@ const details = () => ({
         },
         {
             number: 2,
-            tooltip: '⏭️ File skipped - incompatible DV profile or not DV/HDR10+ content',
+            tooltip: '⏭️ File skipped - incompatible DV profile, not DV/HDR10+ content, or video bitrate already at/below the skip threshold',
         },
         {
             number: 3,
@@ -1251,6 +1269,100 @@ const generatePreset = (args, videoAnalysis, logger) => {
     return preset;
 };
 
+// Get the real size of a file on disk. args.inputFileObj.file_size is Tdarr's cached
+// DB value and can be stale mid-flow, so stat the actual file and only fall back to
+// the cached value if the stat fails.
+const getActualFileSize = (filePath, cachedSize, logger) => {
+    try {
+        return fs.statSync(filePath).size;
+    } catch (statError) {
+        logger.warn(`⚠️ Could not stat ${path.basename(filePath)} directly, falling back to cached file_size: ${statError.message}`);
+        return cachedSize || 0;
+    }
+};
+
+// Read the VIDEO STREAM bitrate (bps) - never the container/overall bitrate
+const getVideoStreamBitrate = (inputFileObj, logger) => {
+    // 1) MediaInfo video track (same source the standard HandBrake plugin uses)
+    if (inputFileObj.mediaInfo && inputFileObj.mediaInfo.track) {
+        const tracks = Array.isArray(inputFileObj.mediaInfo.track) ? inputFileObj.mediaInfo.track : [inputFileObj.mediaInfo.track];
+        for (const track of tracks) {
+            if (String(track['@type']).toLowerCase() === 'video') {
+                const value = Number(track.BitRate || track.BitRate_Nominal);
+                if (value > 0) {
+                    logger.debug(`Video bitrate from MediaInfo: ${value} bps`);
+                    return value;
+                }
+            }
+        }
+    }
+    // 2) ffProbe video stream (bit_rate, then MKV BPS tag)
+    if (inputFileObj.ffProbeData && inputFileObj.ffProbeData.streams) {
+        for (const stream of inputFileObj.ffProbeData.streams) {
+            if (stream.codec_type === 'video') {
+                const value = Number(stream.bit_rate || (stream.tags && (stream.tags.BPS || stream.tags['BPS-eng'])));
+                if (value > 0) {
+                    logger.debug(`Video bitrate from ffProbe: ${value} bps`);
+                    return value;
+                }
+            }
+        }
+    }
+    return null;
+};
+
+// Skip check: source already HEVC/AV1 and video bitrate at or below the user's threshold
+const checkBitrateSkip = (args, inputFileObj, logger) => {
+    const hevcKbps = Number(args.inputs.hevcSkipBitrate) || 0;
+    const av1Kbps = Number(args.inputs.av1SkipBitrate) || 0;
+
+    if (hevcKbps <= 0 && av1Kbps <= 0) {
+        logger.extended('Bitrate skip filter disabled (both thresholds are 0)');
+        return { shouldSkip: false, reason: 'Bitrate skip filter disabled' };
+    }
+
+    let currentCodec = null;
+    if (inputFileObj.ffProbeData && inputFileObj.ffProbeData.streams) {
+        const videoStream = inputFileObj.ffProbeData.streams.find((st) => st.codec_type === 'video');
+        if (videoStream) currentCodec = String(videoStream.codec_name || '').toLowerCase();
+    }
+    if (!currentCodec) {
+        logger.warn('No video codec detected in ffProbe data - proceeding with encoding');
+        return { shouldSkip: false, reason: 'No video codec detected' };
+    }
+
+    const codecMap = { h265: 'hevc', hevc: 'hevc', av01: 'av1', av1: 'av1' };
+    const mappedCodec = codecMap[currentCodec];
+    if (!mappedCodec) {
+        logger.extended(`Source codec ${currentCodec} has no skip threshold - proceeding with encoding`);
+        return { shouldSkip: false, reason: `Source codec ${currentCodec} not covered by skip filter` };
+    }
+
+    const thresholdKbps = mappedCodec === 'hevc' ? hevcKbps : av1Kbps;
+    if (thresholdKbps <= 0) {
+        logger.extended(`Skip threshold for ${mappedCodec.toUpperCase()} is 0 (disabled) - proceeding with encoding`);
+        return { shouldSkip: false, reason: `${mappedCodec.toUpperCase()} skip threshold disabled` };
+    }
+
+    const currentBitrate = getVideoStreamBitrate(inputFileObj, logger);
+    if (!currentBitrate) {
+        logger.warn('No video bitrate information found - proceeding with encoding');
+        return { shouldSkip: false, reason: 'No bitrate information available' };
+    }
+
+    const thresholdBps = thresholdKbps * 1000;
+    logger.extended(`Bitrate check: ${mappedCodec.toUpperCase()} video ${Math.round(currentBitrate / 1000)} kbps vs threshold ${thresholdKbps} kbps`);
+
+    if (currentBitrate <= thresholdBps) {
+        const reason = `File already optimized - ${mappedCodec.toUpperCase()} video ${Math.round(currentBitrate / 1000)} kbps <= ${thresholdKbps} kbps threshold`;
+        logger.success(reason);
+        return { shouldSkip: true, reason, currentBitrate, thresholdBps, codec: mappedCodec };
+    }
+
+    logger.info(`File needs encoding - video ${Math.round(currentBitrate / 1000)} kbps > ${thresholdKbps} kbps threshold`);
+    return { shouldSkip: false, reason: 'Video bitrate above threshold' };
+};
+
 // Function to check if an exit code should be treated as success
 const isSuccessfulExitCode = (exitCode) => {
     if (exitCode === 0) return true;
@@ -1474,6 +1586,31 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
 
         processingMetrics.analysisTime = Date.now() - analysisStartTime;
 
+        // Bitrate skip filter (HEVC / AV1 source already at or below threshold)
+        const bitrateCheck = checkBitrateSkip(args, args.inputFileObj, logger);
+        if (bitrateCheck.shouldSkip) {
+            logger.info('⏭️ Skipping encode - passing file to next plugin');
+
+            const updatedVariables = {
+                ...args.variables,
+                dvHdrAnalysis: 'Skipped - bitrate at/below threshold',
+                dvHdrFormat: videoAnalysis.detectedFormat.name,
+                dvHdrProfile: videoAnalysis.dolbyVisionProfile,
+                dvHdrSkipped: true,
+                dvHdrSkipReason: bitrateCheck.reason,
+                analysisMethod: videoAnalysis.analysisMethod,
+                handbrakeVersion: handbrakeVersion.version,
+                processingTime: Date.now() - startTime
+            };
+
+            args.jobLog(logger.getOutput());
+            return {
+                outputFileObj: args.inputFileObj,
+                outputNumber: 2,
+                variables: updatedVariables,
+            };
+        }
+
         // Log progress after analysis
         args.jobLog(logger.getOutput());
         logger.clear();
@@ -1686,6 +1823,14 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
                 clearInterval(progressTimeoutId);
                 logger.extended('Progress timeout monitoring stopped');
             }
+            try {
+                fs.unlinkSync(presetPath);
+                logger.debug('Temporary DV/HDR preset file cleaned up');
+            } catch (cleanupError) {
+                if (cleanupError.code !== 'ENOENT') {
+                    logger.warn(`Warning - Failed to clean up preset file: ${cleanupError.message}`);
+                }
+            }
         }
 
         processingMetrics.encodingTime = Date.now() - encodingStartTime;
@@ -1706,7 +1851,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
             const stats = yield fs.promises.stat(outputFilePath);
             outputFileSize = stats.size;
             const outputSizeMB = Math.round(outputFileSize / 1024 / 1024);
-            const inputSizeMB = Math.round((args.inputFileObj.file_size || 0) / 1024 / 1024);
+            const inputSizeMB = Math.round(getActualFileSize(args.inputFileObj._id, args.inputFileObj.file_size, logger) / 1024 / 1024);
             
             logger.success(`DV/HDR output file created successfully. Size: ${formatFileSize(outputFileSize)}`);
             logger.extended(`File size comparison: ${outputSizeMB} MB (Input: ${inputSizeMB} MB)`);
@@ -1722,15 +1867,7 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
             logger.debug(`Output file access error: ${error.stack}`);
         }
         
-        // Clean up preset file
-        logger.extended('Cleaning up temporary DV/HDR preset file...');
-        try {
-            yield fs.promises.unlink(presetPath);
-            logger.debug('Temporary DV/HDR preset file cleaned up');
-        } catch (error) {
-            logger.warn(`Warning - Failed to clean up preset file: ${error.message}`);
-            logger.debug(`Cleanup error details: ${error.stack}`);
-        }
+        // Preset file is cleaned up in the finally block after runCli()
         
         // Handle cancellation
         if (cliInstance.cancelled) {
@@ -1813,7 +1950,8 @@ const plugin = (args) => __awaiter(void 0, void 0, void 0, function* () {
         }
 
         // Calculate compression statistics
-        const originalSize = args.inputFileObj.file_size || 0;
+        // NOTE: file_size is Tdarr's cached DB value and can be stale - stat the real source file
+        const originalSize = getActualFileSize(args.inputFileObj._id, args.inputFileObj.file_size, logger);
         const compressionRatio = originalSize > 0 ? outputFileSize / originalSize : 0;
         const spaceSaved = originalSize - outputFileSize;
         const compressionPercent = originalSize > 0 ? ((spaceSaved / originalSize) * 100) : 0;
